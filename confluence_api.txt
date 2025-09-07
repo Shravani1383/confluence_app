@@ -12,26 +12,25 @@ def search_confluence(keyword: str):
         "cql": f'text~"{keyword}"',
         "limit": 10,
     }
-    headers = {
-        "Authorization": f"Bearer {API_TOKEN}",   # <-- try this
-        "Accept": "application/json"
-    }
-
-    response = requests.get(API_URL, params=params, headers=headers, verify=False)
+    response = requests.get(
+        API_URL,
+        params=params,
+        auth=HTTPBasicAuth(USERNAME, PASSWORD),   # <-- try with password first
+        headers={"Accept": "application/json"},
+        verify=False   # ⚠️ only for testing, replace with your root cert
+    )
 
     if response.status_code != 200:
         raise Exception(f"Error: {response.status_code}, {response.text}")
 
     data = response.json()
-    return [
-        {
-            "title": r.get("title"),
-            "url": f"{CONFLUENCE_BASE_URL}{r['_links']['webui']}"
-        }
-        for r in data.get("results", [])
-    ]
+    results = []
+    for r in data.get("results", []):
+        title = r.get("title")
+        url = f"{BASE_URL}{r['_links']['webui']}"
+        results.append({"title": title, "url": url})
+    return results
 
 if __name__ == "__main__":
-    results = search_confluence("deployment")
-    for r in results:
+    for r in search_confluence("deployment"):
         print(f"{r['title']} → {r['url']}")
