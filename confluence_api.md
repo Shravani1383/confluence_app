@@ -302,35 +302,63 @@ class Confluence(common.Sensitive):
 ## 2. `extract_urls.py` – Search Pages by Keyword
 
 ```python
-from confluence import Confluence
+import os
 import sys
+import requests
+from bs4 import BeautifulSoup
 
-def search_pages(conf, space_key, keyword):
-    cql = f'space="{space_key}" and title~"{keyword}"'
-    resp = conf._call_confluence_service(
-        f"/content/search?cql={cql}&expand=version"
-    )
-    urls = []
-    if "results" in resp:
-        for r in resp["results"]:
-            urls.append(conf.CONFLUENCE_HOST + r["_links"]["tinyui"])
-    return urls
+# =========================
+# Config
+# =========================
+CONFLUENCE_BASE = "https://alm-confluence.systems.uk.hsbc/confluence"
+CERT_FILE = os.path.join(os.path.dirname(__file__), "cert", "combined-g2.pem")
 
+# =========================
+# Functions
+# =========================
+def fetch_space_pages(space_key, username, pat, keyword):
+    """Fetch all page URLs from a Confluence space containing the keyword."""
+    session = requests.Session()
+    session.auth = (username, pat)
+    
+    # URL for space overview (lists pages)
+    space_url = f"{CONFLUENCE_BASE}/spaces/{space_key}/pages"
+    resp = session.get(space_url, verify=CERT_FILE)
+    resp.raise_for_status()
+    
+    soup = BeautifulSoup(resp.text, "html.parser")
+    urls = set()
+    
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/pages/" in href and keyword.lower() in href.lower():
+            # Construct full URL
+            full_url = href if href.startswith("http") else CONFLUENCE_BASE + href
+            urls.add(full_url)
+    
+    return list(urls)
 
+# =========================
+# Main
+# =========================
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("Usage: python extract_urls.py <space_key> <keyword> <username> <password_or_api_token>")
+    if len(sys.argv) < 5:
+        print("Usage: python extract_urls.py <space_key> <keyword> <username> <PAT>")
         sys.exit(1)
 
     space_key = sys.argv[1]
     keyword = sys.argv[2]
     username = sys.argv[3]
-    password = sys.argv[4]
+    pat = sys.argv[4]
 
-    conf = Confluence(credentials=(username, password))
+    urls = fetch_space_pages(space_key, username, pat, keyword)
+    if urls:
+        print("Found URLs:")
+        for u in urls:
+            print(u)
+    else:
+        print("No matching URLs found.")
 
-    urls = search_pages(conf, space_key, keyword)
-    print("\n".join(urls))
 
 ```
 
