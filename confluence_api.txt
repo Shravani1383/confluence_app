@@ -9,31 +9,29 @@ API_TOKEN = "your-pat-token"          # Personal Access Token
 
 def search_confluence(keyword: str):
     params = {
-        "cql": f'text~"{keyword}"',  # CQL query for full-text search
-        "limit": 10,                 # Number of results
+        "cql": f'text~"{keyword}"',
+        "limit": 10,
     }
-    response = requests.get(
-        API_URL,
-        params=params,
-        auth=HTTPBasicAuth(USERNAME, API_TOKEN),
-        headers={"Accept": "application/json"}
-    )
+    headers = {
+        "Authorization": f"Bearer {API_TOKEN}",   # <-- try this
+        "Accept": "application/json"
+    }
+
+    response = requests.get(API_URL, params=params, headers=headers, verify=False)
 
     if response.status_code != 200:
         raise Exception(f"Error: {response.status_code}, {response.text}")
 
     data = response.json()
-    links = []
-    for result in data.get("results", []):
-        title = result.get("title")
-        link = f"{CONFLUENCE_BASE_URL}{result['_links']['webui']}"
-        links.append({"title": title, "url": link})
+    return [
+        {
+            "title": r.get("title"),
+            "url": f"{CONFLUENCE_BASE_URL}{r['_links']['webui']}"
+        }
+        for r in data.get("results", [])
+    ]
 
-    return links
-
-# Example usage
 if __name__ == "__main__":
-    keyword = "deployment"
-    results = search_confluence(keyword)
+    results = search_confluence("deployment")
     for r in results:
         print(f"{r['title']} → {r['url']}")
