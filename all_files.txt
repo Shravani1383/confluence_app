@@ -6,6 +6,8 @@ import json
 import time
 from dotenv import load_dotenv
 
+# Load environment variables
+load_dotenv()
 # Import the ConfluenceQA class
 from confluence_qa import ConfluenceQA
 
@@ -93,12 +95,12 @@ confluence_qa.py
 import os
 from langchain.document_loaders import ConfluenceLoader
 from langchain.text_splitter import CharacterTextSplitter, TokenTextSplitter
-from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI  # ⬅️ change here
-from langchain.prompts import PromptTemplate
+from langchain_openai import AzureOpenAIEmbeddings, AzureChatOpenAI
 from constants import *
 
-from langchain.vectorstores import Chroma
+from langchain.vectorstores import FAISS   # ⬅️ use FAISS
 from langchain.chains import RetrievalQA
+import pickle
 
 class ConfluenceQA:
     def __init__(self, config: dict = {}):
@@ -112,7 +114,7 @@ class ConfluenceQA:
     def init_embeddings(self) -> None:
         # Azure OpenAI embeddings
         self.embedding = AzureOpenAIEmbeddings(
-            deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT"),  # e.g., "text-embedding-ada-002"
+            deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT"),
             model="text-embedding-ada-002",
             chunk_size=1
         )
@@ -120,33 +122,41 @@ class ConfluenceQA:
     def init_models(self) -> None:
         # Azure OpenAI GPT model
         self.llm = AzureChatOpenAI(
-            deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),  # e.g., "gpt-35-turbo"
+            deployment_name=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
             temperature=0.0
         )
 
     def vector_db_confluence_docs(self, force_reload: bool = False) -> None:
         persist_directory = self.config.get("persist_directory", None)
+        faiss_index_path = os.path.join(persist_directory, "faiss_index.pkl") if persist_directory else None
+
         confluence_url = self.config.get("confluence_url", None)
         username = self.config.get("username", None)
         api_key = self.config.get("api_key", None)
         space_key = self.config.get("space_key", None)
 
-        if persist_directory and os.path.exists(persist_directory) and not force_reload:
-            self.vectordb = Chroma(persist_directory=persist_directory, embedding_function=self.embedding)
+        # Load FAISS index if available
+        if faiss_index_path and os.path.exists(faiss_index_path) and not force_reload:
+            with open(faiss_index_path, "rb") as f:
+                self.vectordb = pickle.load(f)
         else:
+            # 1. Extract the documents
             loader = ConfluenceLoader(url=confluence_url, username=username, api_key=api_key)
             documents = loader.load(space_key=space_key, limit=100)
 
+            # 2. Split the texts
             text_splitter = CharacterTextSplitter(chunk_size=100, chunk_overlap=0)
             texts = text_splitter.split_documents(documents)
             text_splitter = TokenTextSplitter(chunk_size=1000, chunk_overlap=10, encoding_name="cl100k_base")
             texts = text_splitter.split_documents(texts)
 
-            self.vectordb = Chroma.from_documents(
-                documents=texts,
-                embedding=self.embedding,
-                persist_directory=persist_directory
-            )
+            # 3. Create FAISS index
+            self.vectordb = FAISS.from_documents(texts, self.embedding)
+
+            # Save FAISS index if persist_directory provided
+            if faiss_index_path:
+                with open(faiss_index_path, "wb") as f:
+                    pickle.dump(self.vectordb, f)
 
     def retreival_qa_chain(self):
         self.retriever = self.vectordb.as_retriever(search_kwargs={"k": 4})
@@ -154,7 +164,6 @@ class ConfluenceQA:
 
     def answer_confluence(self, question: str) -> str:
         return self.qa.run(question)
-
 
 constants.py
 
