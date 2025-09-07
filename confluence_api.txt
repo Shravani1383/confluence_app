@@ -1,0 +1,39 @@
+import requests
+from requests.auth import HTTPBasicAuth
+
+# Confluence details
+CONFLUENCE_BASE_URL = "https://your-org.atlassian.net/wiki"
+API_URL = f"{CONFLUENCE_BASE_URL}/rest/api/content/search"
+USERNAME = "your-email@example.com"   # Atlassian account email
+API_TOKEN = "your-pat-token"          # Personal Access Token
+
+def search_confluence(keyword: str):
+    params = {
+        "cql": f'text~"{keyword}"',  # CQL query for full-text search
+        "limit": 10,                 # Number of results
+    }
+    response = requests.get(
+        API_URL,
+        params=params,
+        auth=HTTPBasicAuth(USERNAME, API_TOKEN),
+        headers={"Accept": "application/json"}
+    )
+
+    if response.status_code != 200:
+        raise Exception(f"Error: {response.status_code}, {response.text}")
+
+    data = response.json()
+    links = []
+    for result in data.get("results", []):
+        title = result.get("title")
+        link = f"{CONFLUENCE_BASE_URL}{result['_links']['webui']}"
+        links.append({"title": title, "url": link})
+
+    return links
+
+# Example usage
+if __name__ == "__main__":
+    keyword = "deployment"
+    results = search_confluence(keyword)
+    for r in results:
+        print(f"{r['title']} → {r['url']}")
