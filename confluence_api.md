@@ -303,43 +303,35 @@ class Confluence(common.Sensitive):
 
 ```python
 from confluence import Confluence
+import sys
 
-
-def search_pages(conf: Confluence, space_key: str, keyword: str):
-    """
-    Search pages in a Confluence space containing the keyword in the title.
-    """
+def search_pages(conf, space_key, keyword):
+    cql = f'space="{space_key}" and title~"{keyword}"'
     resp = conf._call_confluence_service(
-        f"/content/search?cql=space=\"{space_key}\" and title~\"{keyword}\"&expand=version"
+        f"/content/search?cql={cql}&expand=version"
     )
-
-    if "results" not in resp:
-        return []
-
-    urls = [
-        f"{conf.CONFLUENCE_HOST}{p['_links']['tinyui']}"
-        for p in resp["results"]
-    ]
+    urls = []
+    if "results" in resp:
+        for r in resp["results"]:
+            urls.append(conf.CONFLUENCE_HOST + r["_links"]["tinyui"])
     return urls
 
 
 if __name__ == "__main__":
-    # 🔹 Your credentials (user, API token or password depending on setup)
-    credentials = ("your-username", "your-password")
+    if len(sys.argv) < 4:
+        print("Usage: python extract_urls.py <space_key> <keyword> <username> <password_or_api_token>")
+        sys.exit(1)
 
-    conf = Confluence(credentials=credentials)
+    space_key = sys.argv[1]
+    keyword = sys.argv[2]
+    username = sys.argv[3]
+    password = sys.argv[4]
 
-    space_key = "ALM"         # Example space
-    keyword = "setup"         # Example keyword
+    conf = Confluence(credentials=(username, password))
 
     urls = search_pages(conf, space_key, keyword)
+    print("\n".join(urls))
 
-    if not urls:
-        print("No matching pages found.")
-    else:
-        print("Matching Confluence URLs:")
-        for url in urls:
-            print(" -", url)
 ```
 
 ---
