@@ -34,3 +34,40 @@ print("\nAll Pages in Space DEMO:")
 for p in pages:
     print(f"- {p['title']} (ID: {p['id']})")
 
+
+
+from atlassian import Confluence
+import requests
+import os
+
+# Path to your cert directory
+cert_dir = os.path.join(os.getcwd(), "cert")
+
+# If you have a single CA bundle file (e.g. ca.pem or ca.crt)
+ca_cert = os.path.join(cert_dir, "ca.crt")   # change file name as per your cert
+
+# Create session and add cert verification
+session = requests.Session()
+session.verify = ca_cert   # tells requests to trust this cert
+
+# If you also need client certificate + key (mutual TLS)
+# session.cert = (os.path.join(cert_dir, "client.crt"),
+#                 os.path.join(cert_dir, "client.key"))
+
+# Connect to Confluence
+confluence = Confluence(
+    url="https://your-confluence-domain.com",  # use https
+    username="admin",                          # replace with your username
+    password="admin",                          # replace with your password or PAT
+    session=session,
+)
+
+# Example: Get a page
+page = confluence.get_page_by_title(
+    space="DEMO",
+    title="This is the title",
+    expand="body.storage"
+)
+
+print("Page Content:")
+print(page["body"]["storage"]["value"])
