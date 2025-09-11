@@ -1,0 +1,483 @@
+Nice — below is a complete, runnable **end-to-end Python module** that implements what you asked for:
+
+* Uses **your Confluence REST API (NTLM)** for keyword/BM25 retrieval.
+* Uses **OpenAI embeddings** for semantic retrieval and **GPT-4o** for query understanding / decomposition.
+* Uses **FAISS** as the vector store for chunk embeddings.
+* Merges keyword + semantic results with a weighted hybrid score `final = α*kw + β*sem + γ*log(1+appearance_count)` and returns top-N unique page URLs.
+
+Save this as `confluence_hybrid_search.py`. Read the comments and config area at top, then replace credentials and cert paths and run.
+
+---
+
+## Requirements
+
+Install required packages:
+
+```bash
+pip install requests requests-ntlm openai faiss-cpu tiktoken python-dotenv
+pip install nltk   # optional: for simple chunking; you can substitute your chunker
+```
+
+Create a `.env` file with:
+
+```
+OPENAI_API_KEY=sk-...
+DOMAIN_USER=YOUR_DOMAIN\\username
+DOMAIN_PASSWORD=yourpassword
+CONFLUENCE_BASE_URL=
+CERT_FILE=Cacert3.pem
+```
+
+---
+
+## `confluence_hybrid_search.py`
+
+```python
+"""
+Confluence hybrid search:
+- Uses Confluence REST API for keyword search (NTLM auth)
+- Uses OpenAI embeddings to index chunks and FAISS for vector search
+- Uses GPT-4o to perform query understanding & decomposition
+- Merges and reranks results with weighted fusion
+"""
+
+import os
+import math
+import time
+import json
+import faiss
+import hashlib
+import requests
+from requests_ntlm import HttpNtlmAuth
+from typing import List, Dict, Tuple, Any
+from dotenv import load_dotenv
+
+# OpenAI SDK (light usage)
+import openai
+
+# Simple chunker - uses sentence splitting via NLTK if installed
+try:
+    import nltk
+    nltk.download("punkt", quiet=True)
+    from nltk.tokenize import sent_tokenize
+except Exception:
+    sent_tokenize = lambda t: t.split(".")  # fallback
+
+load_dotenv()
+
+# ---------- CONFIG ----------
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+DOMAIN_USER = os.getenv("DOMAIN_USER")        
+DOMAIN_PASSWORD = os.getenv("DOMAIN_PASSWORD")
+CONFLUENCE_BASE_URL = os.getenv("CONFLUENCE_BASE_URL")
+CERT_FILE = os.getenv("CERT_FILE", True)     # path to CA cert, or True to use system CA
+
+# Embedding model choices (OpenAI)
+EMBEDDING_MODEL = "text-embedding-3-small"    # or text-embedding-3-large
+GPT_MODEL = "gpt-4o"                         # for decomposition & query understanding
+
+# FAISS index settings
+FAISS_INDEX_PATH = "faiss_index.bin"
+METADATA_PATH = "faiss_metadata.json"       # maps vector idx -> chunk metadata
+
+# Hybrid scoring weights (tune these)
+ALPHA = 0.6  # keyword weight
+BETA = 0.4   # semantic weight
+GAMMA = 0.12 # appearance_count boost factor
+
+# Search sizes
+K_SEMANTIC = 10
+MAX_RESULTS_KEYWORD = 10
+TOP_K_RETURN = 10
+
+# Initialize OpenAI
+if not OPENAI_API_KEY:
+    raise RuntimeError("OPENAI_API_KEY not set in environment")
+openai.api_key = OPENAI_API_KEY
+
+# ---------- Utilities ----------
+def sha1(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+# ---------- Confluence ingestion & chunking ----------
+def fetch_confluence_pages(start: int = 0, limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Fetch pages via Confluence REST API pagination.
+    Returns list of page dicts (id, title, body, space, lastModified)
+    """
+    pages = []
+    session = requests.Session()
+    session.verify = CERT_FILE
+    auth = HttpNtlmAuth(DOMAIN_USER, DOMAIN_PASSWORD)
+
+    url = f""
+    params = {
+        "start": start,
+        "limit": limit,
+        "expand": "body.storage,version,space"
+    }
+    resp = session.get(url, params=params, auth=auth)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to fetch pages: {resp.status_code} {resp.text}")
+    data = resp.json()
+    for item in data.get("results", []):
+        body = item.get("body", {}).get("storage", {}).get("value", "")  # HTML content
+        pages.append({
+            "id": item.get("id"),
+            "title": item.get("title"),
+            "space": item.get("space", {}).get("key"),
+            "body": body,
+            "modified": item.get("version", {}).get("when")
+        })
+    return pages
+
+def html_to_text(html: str) -> str:
+    """
+    Very simple HTML->text stripper. For production use BeautifulSoup.
+    """
+    try:
+        from bs4 import BeautifulSoup
+        return BeautifulSoup(html, "html.parser").get_text(separator="\n")
+    except Exception:
+        # fallback naive strip
+        import re
+        text = re.sub(r"<[^>]+>", " ", html)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
+def chunk_text(text: str, chunk_size: int = 800) -> List[str]:
+    """
+    Chunk text into overlapping chunks ~ chunk_size tokens (approx).
+    Uses sentence tokenization to avoid cutting in the middle of sentences.
+    """
+    sentences = sent_tokenize(text)
+    chunks = []
+    cur = ""
+    for s in sentences:
+        if len(cur) + len(s) + 1 <= chunk_size:
+            cur = (cur + " " + s).strip()
+        else:
+            if cur:
+                chunks.append(cur)
+            cur = s
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+# ---------- Embedding + FAISS index ----------
+def get_embedding(text: str) -> List[float]:
+    """Call OpenAI embed endpoint."""
+    resp = openai.Embedding.create(input=text, model=EMBEDDING_MODEL)
+    return resp["data"][0]["embedding"]
+
+def build_faiss_index(chunks_meta: List[Dict[str, Any]], force_rebuild: bool = False):
+    """
+    chunks_meta: list of dicts: { 'chunk_id', 'page_id', 'text', 'embedding' }
+    Produces/overwrites FAISS index and metadata JSON.
+    """
+    if not chunks_meta:
+        raise ValueError("No chunks_meta provided")
+
+    dim = len(chunks_meta[0]["embedding"])
+    xb = [c["embedding"] for c in chunks_meta]
+    import numpy as np
+    xb = np.array(xb).astype("float32")
+
+    index = faiss.IndexFlatIP(dim)  # inner product similarity (use normalized vectors)
+    # normalize vectors to use cosine via inner product
+    faiss.normalize_L2(xb)
+    index.add(xb)
+
+    faiss.write_index(index, FAISS_INDEX_PATH)
+
+    # save metadata list
+    with open(METADATA_PATH, "w", encoding="utf-8") as f:
+        json.dump(chunks_meta, f, ensure_ascii=False, indent=2)
+
+    print(f"Built FAISS index with {index.ntotal} vectors (dim={dim})")
+
+def load_faiss_index():
+    if not os.path.exists(FAISS_INDEX_PATH) or not os.path.exists(METADATA_PATH):
+        raise FileNotFoundError("FAISS index or metadata not found. Run ingestion first.")
+    index = faiss.read_index(FAISS_INDEX_PATH)
+    with open(METADATA_PATH, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+    return index, meta
+
+# ---------- Confluence keyword search (CQL) ----------
+def confluence_keyword_search(query: str, max_results: int = MAX_RESULTS_KEYWORD) -> List[Dict[str, Any]]:
+    """
+    Calls Confluence CQL search: returns list of candidates as dicts:
+    { 'page_id', 'title', 'url', 'keyword_score' (rank-based fallback) }
+    """
+    session = requests.Session()
+    session.verify = CERT_FILE
+    auth = HttpNtlmAuth(DOMAIN_USER, DOMAIN_PASSWORD)
+
+    # Build CQL: use ~ for full-text "contains" or text ~ "..."
+    cql = f'text ~ "{query}"'
+    url = f""
+    params = {"cql": cql, "limit": max_results, "expand": "space"}
+    resp = session.get(url, params=params, auth=auth)
+    if resp.status_code != 200:
+        print("Confluence search failed:", resp.status_code, resp.text)
+        return []
+    data = resp.json()
+    results = []
+    for rank, r in enumerate(data.get("results", []), start=1):
+        pid = r.get("id")
+        title = r.get("title")
+        page_url = f""
+        # Confluence may not provide a numeric score; use reciprocal of rank to approximate
+        keyword_score = 1.0 / rank
+        results.append({"page_id": pid, "title": title, "url": page_url, "keyword_score": keyword_score})
+    return results
+
+# ---------- Query understanding & decomposition using GPT-4o ----------
+def decompose_query_llm(user_text: str, n_subqueries: int = 3) -> List[str]:
+    """
+    Uses GPT-4o to extract entities + produce n_subqueries (short queries).
+    Returns list of short search-friendly sub-queries.
+    """
+    prompt = f"""
+You are a helpful assistant that turns long user problem descriptions into a small set of concise search queries.
+Extract key entities and produce {n_subqueries} short search queries suitable for a Confluence full-text search.
+Provide only a JSON array of queries in plain text.
+
+User text:
+\"\"\"{user_text}\"\"\"
+"""
+    resp = openai.ChatCompletion.create(
+        model=GPT_MODEL,
+        messages=[{"role": "system", "content": "You produce short search queries and nothing else."},
+                  {"role": "user", "content": prompt}],
+        max_tokens=256,
+        temperature=0.0,
+    )
+    text = resp["choices"][0]["message"]["content"].strip()
+    # Attempt to parse JSON array; fallback to newline-splitting
+    try:
+        queries = json.loads(text)
+        if isinstance(queries, list):
+            queries = [q.strip() for q in queries if q.strip()]
+            return queries[:n_subqueries]
+    except Exception:
+        # fallback: split by newline and take top-n
+        lines = [l.strip("-• \t") for l in text.splitlines() if l.strip()]
+        if lines:
+            return lines[:n_subqueries]
+    # last fallback: return simple noun chunks (split)
+    return [user_text[:200]]
+
+# ---------- Hybrid search orchestration ----------
+def semantic_search_faiss(index, meta, query_text: str, k: int = K_SEMANTIC) -> List[Tuple[str, float]]:
+    """
+    Query FAISS for top-k chunk matches and return list of (page_id, score)
+    Score: cosine similarity in [0..1]
+    """
+    import numpy as np
+    q_emb = get_embedding(query_text)
+    qv = np.array([q_emb]).astype("float32")
+    faiss.normalize_L2(qv)
+    D, I = index.search(qv, k)
+    results = []
+    for dist, idx in zip(D[0], I[0]):
+        if idx < 0:
+            continue
+        chunk_meta = meta[idx]
+        page_id = chunk_meta["page_id"]
+        # dist is inner-product (cosine) after normalization
+        sem_score = float(dist)
+        results.append((page_id, sem_score))
+    return results
+
+def normalize_scores(scores: List[float]) -> List[float]:
+    if not scores:
+        return []
+    min_s = min(scores)
+    max_s = max(scores)
+    if max_s - min_s < 1e-6:
+        return [1.0 for _ in scores]
+    return [(s - min_s) / (max_s - min_s) for s in scores]
+
+def merge_and_rank(keyword_cands: List[Dict], semantic_cands: List[Tuple[str, float]],
+                   alpha=ALPHA, beta=BETA, gamma=GAMMA, top_k=TOP_K_RETURN):
+    """
+    Merge candidates:
+    - keyword_cands: list of dicts with page_id, keyword_score
+    - semantic_cands: list of tuples (page_id, sem_score)
+    Returns ranked unique pages with final scores and metadata.
+    """
+    from collections import defaultdict
+    agg = defaultdict(lambda: {"kw_scores": [], "sem_scores": [], "title": None, "url": None, "appearance": 0})
+
+    for idx, k in enumerate(keyword_cands):
+        pid = k["page_id"]
+        agg[pid]["kw_scores"].append(k.get("keyword_score", 0.0))
+        agg[pid]["title"] = k.get("title", agg[pid]["title"])
+        agg[pid]["url"] = k.get("url", agg[pid]["url"])
+        agg[pid]["appearance"] += 1
+
+    for pid, sem in semantic_cands:
+        agg[pid]["sem_scores"].append(sem)
+        agg[pid]["appearance"] += 1
+
+    # Normalize within kw and sem
+    # Prepare raw lists
+    kw_raw = [max(v["kw_scores"]) if v["kw_scores"] else 0.0 for v in agg.values()]
+    sem_raw = [max(v["sem_scores"]) if v["sem_scores"] else 0.0 for v in agg.values()]
+    if kw_raw:
+        kw_norm_all = normalize_scores(kw_raw)
+    else:
+        kw_norm_all = []
+    if sem_raw:
+        sem_norm_all = normalize_scores(sem_raw)
+    else:
+        sem_norm_all = []
+
+    results = []
+    for i, (pid, v) in enumerate(agg.items()):
+        kw_val = max(v["kw_scores"]) if v["kw_scores"] else 0.0
+        sem_val = max(v["sem_scores"]) if v["sem_scores"] else 0.0
+        # fetch normalized values by index i
+        kw_norm = kw_norm_all[i] if kw_norm_all else 0.0
+        sem_norm = sem_norm_all[i] if sem_norm_all else 0.0
+        final = alpha * kw_norm + beta * sem_norm + gamma * math.log(1 + v["appearance"])
+        results.append({"page_id": pid, "title": v["title"], "url": v["url"], "final_score": final,
+                        "kw_norm": kw_norm, "sem_norm": sem_norm, "appearance": v["appearance"]})
+    results.sort(key=lambda x: x["final_score"], reverse=True)
+    return results[:top_k]
+
+# ---------- High-level hybrid_search API ----------
+def hybrid_search(user_text: str, n_subqueries: int = 3, top_k: int = TOP_K_RETURN):
+    """
+    End-to-end:
+    - Decompose query into subqueries (GPT)
+    - For each subquery, run keyword search + semantic search
+    - Merge candidates and rerank
+    - Return top-K unique page urls
+    """
+    # Load FAISS index + metadata
+    index, meta = load_faiss_index()
+
+    # 1) Decompose
+    sub_queries = decompose_query_llm(user_text, n_subqueries)
+    print("Sub-queries:", sub_queries)
+
+    all_keyword_cands = []
+    all_semantic_pairs = []  # (page_id, score)
+
+    # 2) For each sub-query: call keyword and semantic searches
+    for sq in sub_queries:
+        try:
+            kres = confluence_keyword_search(sq, max_results=MAX_RESULTS_KEYWORD)
+        except Exception as e:
+            print("Keyword search error:", e)
+            kres = []
+        # add keyword results
+        all_keyword_cands.extend(kres)
+
+        # semantic search (FAISS)
+        try:
+            sem_pairs = semantic_search_faiss(index, meta, sq, k=K_SEMANTIC)
+            all_semantic_pairs.extend(sem_pairs)
+        except Exception as e:
+            print("Semantic search error:", e)
+
+    # 3) Merge & dedupe
+    ranked = merge_and_rank(all_keyword_cands, all_semantic_pairs, alpha=ALPHA, beta=BETA, gamma=GAMMA, top_k=top_k)
+
+    return ranked
+
+# ---------- Ingestion helper to create FAISS index from Confluence (run once) ----------
+def ingest_confluence_all_pages(pages_limit=200):
+    """
+    Demo ingestion: fetch pages, chunk them, compute embeddings, and build FAISS.
+    For production: add pagination and incremental updates.
+    """
+    print("Fetching pages from Confluence...")
+    pages = fetch_confluence_pages(start=0, limit=pages_limit)
+
+    chunks_meta = []
+    print(f"Fetched {len(pages)} pages. Chunking and embedding...")
+    for p in pages:
+        text = html_to_text(p["body"])
+        chunks = chunk_text(text, chunk_size=800)
+        for ci, chunk in enumerate(chunks):
+            chunk_id = sha1(p["id"] + "_" + str(ci))
+            emb = get_embedding(chunk)
+            chunks_meta.append({
+                "chunk_id": chunk_id,
+                "page_id": p["id"],
+                "page_title": p["title"],
+                "page_space": p["space"],
+                "text": chunk,
+                "embedding": emb,
+                "modified": p.get("modified")
+            })
+            # small sleep to avoid hitting rate limits; tune to your quota
+            time.sleep(0.01)
+
+    # Build faiss index
+    build_faiss_index(chunks_meta)
+    print("Ingestion complete.")
+
+# ---------- Example usage ----------
+if __name__ == "__main__":
+    # 1) If running first time: uncomment to ingest + build index
+    # ingest_confluence_all_pages(pages_limit=100)
+
+    # 2) Example hybrid search
+    user_query = ("We set up SSO for Jira Cloud but the SAML configuration keeps failing with "
+                  "an endless login loop. We've followed the docs but users can't login, getting redirect loops.")
+    results = hybrid_search(user_query, n_subqueries=3, top_k=10)
+
+    print("\nTop results:")
+    for r in results:
+        print(f"{r['final_score']:.4f} | {r['page_id']} | {r['title']} | {r['url']} (kw={r['kw_norm']:.3f}, sem={r['sem_norm']:.3f}, hits={r['appearance']})")
+```
+
+---
+
+## Notes, caveats & next steps
+
+1. **Ingestion**: The `ingest_confluence_all_pages` is a simple demo. In production:
+
+   * Implement pagination over all Confluence pages.
+   * Use incremental updates (based on `modified` date).
+   * Use BeautifulSoup (`bs4`) to sanitize HTML to text and preserve code blocks / headings.
+
+2. **Rate limits & cost**:
+
+   * Embeddings for many chunks can be expensive. Consider batching and using `text-embedding-3-small` for cost savings.
+   * Add batching and retry logic around OpenAI calls.
+
+3. **FAISS index type**:
+
+   * This uses `IndexFlatIP` and normalized vectors for cosine similarity. For large corpora, use IVF + PQ or HNSW for efficiency (Qdrant or Pinecone if you prefer managed service).
+
+4. **Keyword score**:
+
+   * Confluence may not expose a numeric score for full-text search; we used rank-based reciprocal as fallback. If you index in Elasticsearch/Manticore, you can get BM25 scores and use them directly.
+
+5. **Tuning**:
+
+   * Tune `ALPHA/BETA/GAMMA`, `n_subqueries`, `K_SEMANTIC`, and chunk size based on dev set (precision\@k / recall\@k).
+   * Consider RRF (Reciprocal Rank Fusion) as an alternative to weighted sum, especially when scales differ.
+
+6. **Security**:
+
+   * Protect credentials; use vaults or managed secret stores in production.
+   * Ensure CA certificate for Confluence endpoint is valid.
+
+---
+
+If you’d like, I can:
+
+* Convert this into a small **FastAPI** microservice with endpoints:
+
+  * `/ingest` to run ingestion,
+  * `/search` to accept user queries and return top URLs + snippets.
+* Or replace the GPT decomposition with a local rule-based fallback for cost reduction.
+
+Which next step do you want — FastAPI service or add click-tracking + ranking tuning scaffolding?
