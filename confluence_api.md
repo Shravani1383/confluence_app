@@ -371,5 +371,39 @@ if __name__ == "__main__":
 * Run `python extract_urls.py` → it will list all Confluence page URLs matching the keyword.
 
 ---
+from atlassian import Confluence
+import requests
 
-Do you want me to also make this script **accept keyword & space key from command line arguments** (`python extract_urls.py ALM setup`)?
+# Setup session (optional but recommended)
+session = requests.Session()
+
+# Connect to Confluence
+confluence = Confluence(
+    url="http://localhost:8090",   # Replace with your Confluence URL
+    username="admin",              # Replace with your username
+    password="admin",              # Replace with your password or API token
+    session=session,
+)
+
+# Example 1: Get a page by title
+page = confluence.get_page_by_title(
+    space="DEMO",
+    title="This is the title",
+    expand="body.storage"   # expand to get page content
+)
+
+print("Page Content:")
+print(page["body"]["storage"]["value"])
+
+# Example 2: Get all pages from a space
+pages = confluence.get_all_pages_from_space(
+    space="DEMO",
+    start=0,
+    limit=10,
+    expand="body.storage"
+)
+
+print("\nAll Pages in Space DEMO:")
+for p in pages:
+    print(f"- {p['title']} (ID: {p['id']})")
+
