@@ -1,0 +1,189 @@
+Perfect — this is a **core issue in RAG pipelines** using large Confluence data. You’re absolutely right: even if your URL search is optimal, **bad chunking ruins retrieval** (you end up embedding useless fragments or incomplete context).
+
+Let’s design a **robust chunking strategy** specific to Confluence data — which can contain **tables, lists, headings, and prose** — and ensure that you maximize retrieval quality.
+
+---
+
+## 🧩 Step 1: Understand Your Data Structure
+
+Confluence data is typically a mix of:
+
+| Type            | Description                         | Example                                 |              |
+| --------------- | ----------------------------------- | --------------------------------------- | ------------ |
+| **Headings**    | Logical sections (`h1`, `h2`, `h3`) | “Setup Instructions”, “Troubleshooting” |              |
+| **Paragraphs**  | Plain text or long explanations     | “To install X, follow these steps…”     |              |
+| **Lists**       | Ordered/unordered lists             | “- Step 1”, “- Step 2”                  |              |
+| **Tables**      | Key-value or reference data         | “Config                                 | Description” |
+| **Code blocks** | Snippets or logs                    | “`kubectl apply -f …`”                  |              |
+
+You should not treat all of them equally when chunking.
+
+---
+
+## 🧠 Step 2: The Ideal Chunking Strategy
+
+We’ll combine **semantic chunking + structural chunking** for best results.
+
+### ✅ **1. Use Heading-Based Chunking as Primary Boundary**
+
+Split your document based on headings (`h1`, `h2`, etc.) first.
+Each section under a heading becomes a logical chunk container.
+
+Why:
+
+* Headings represent **contextual boundaries**.
+* Keeps related sentences together (unlike blind fixed-size chunking).
+
+Example:
+
+```
+# Setup Guide
+Step 1: Install dependencies
+Step 2: Configure database
+
+# Troubleshooting
+If you get an error...
+```
+
+→ Two main chunks: `Setup Guide` and `Troubleshooting`.
+
+---
+
+### ✅ **2. Within Each Section, Apply Hybrid Chunking**
+
+If sections are long, use **semantic or token-based chunking**:
+
+| Approach           | Description                                         | Chunk size     | Ideal for                  |
+| ------------------ | --------------------------------------------------- | -------------- | -------------------------- |
+| **Sentence-based** | Split by full stops and recombine up to ~500 tokens | 300–600 tokens | Text-heavy guides          |
+| **Table-aware**    | Keep entire table as one chunk                      | N/A            | Config or comparison pages |
+| **List-aware**     | Keep complete bullet list as one chunk              | N/A            | Step-by-step guides        |
+| **Code-aware**     | Include code + explanation together                 | ≤ 400 tokens   | Setup examples             |
+
+So if you have a section like:
+
+```
+### Deployment Steps
+- Step 1: Create cluster
+- Step 2: Deploy pods
+```
+
+→ Keep this list as a single chunk (don’t split between steps).
+
+---
+
+### ✅ **3. Use Overlaps to Preserve Context**
+
+When chunking long text, use small **token overlap (50–100 tokens)**.
+
+Helps when a concept flows across boundaries (e.g., “Step 3 continues from Step 2…”).
+
+---
+
+### ✅ **4. Represent Tables Properly Before Embedding**
+
+If your data contains tables:
+
+* Convert tables to **markdown text with key-value format** before embedding.
+  Example:
+
+  ```
+  | Parameter | Description |
+  |------------|-------------|
+  | timeout | Time in seconds |
+  ```
+
+  → becomes
+
+  ```
+  Parameter: timeout  
+  Description: Time in seconds
+  ```
+* This keeps it understandable for embeddings.
+
+---
+
+### ✅ **5. Store Metadata for Each Chunk**
+
+While embedding, **attach metadata**:
+
+```json
+{
+  "url": "https://confluence/.../setup",
+  "title": "Setup Guide",
+  "section": "Database Configuration",
+  "chunk_index": 1,
+  "content_type": "table"
+}
+```
+
+This allows:
+
+* Reranking by section relevance.
+* Grouping results by URL during answer generation.
+
+---
+
+## ⚙️ Step 3: Implementation (Example in Python)
+
+Here’s a high-level structure you can implement:
+
+```python
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+splitter = RecursiveCharacterTextSplitter(
+    separators=["\n### ", "\n## ", "\n#", "\n\n", ". "],
+    chunk_size=600,
+    chunk_overlap=100,
+    length_function=len,
+    add_start_index=True
+)
+
+chunks = splitter.split_text(confluence_page_text)
+```
+
+Then, add logic to:
+
+* Detect tables (`if '|' in line:` → treat as single chunk)
+* Merge lists (`if line.startswith('- ') or line.startswith('* ')`)
+* Embed each chunk with metadata.
+
+---
+
+## 🚀 Step 4: Optional — Use a Smart Semantic Splitter (Advanced)
+
+You can replace token-based splitting with a **semantic segmenter**:
+
+* Libraries like `semantic-text-splitter`, `spacy` or `textsplit` can group text by topic coherence.
+* Example:
+
+  ```python
+  from semantic_text_splitter import TextSplitter
+  splitter = TextSplitter(chunk_size=600)
+  chunks = splitter.chunks(confluence_page_text)
+  ```
+
+  This prevents splitting mid-topic.
+
+---
+
+## ✅ Summary: Recommended Chunking Blueprint
+
+| Rule                                                | Why                                  |
+| --------------------------------------------------- | ------------------------------------ |
+| Split by headings (`h1–h3`)                         | Maintain logical structure           |
+| Merge lists, tables, and code blocks                | Preserve semantic meaning            |
+| Limit chunks to ~500–600 tokens with 50–100 overlap | Optimal for embedding models         |
+| Clean tables into text key-values                   | Improve readability for embeddings   |
+| Store metadata (`url`, `section`, etc.)             | Enable better reranking and grouping |
+
+---
+
+If you tell me:
+
+* how your current data is stored (HTML, Markdown, raw text, or JSON from API)
+* and what embedding model you use (OpenAI, HuggingFace, etc.)
+
+…I can give you an **exact code-ready chunking pipeline** (with the right parsing and chunking logic).
+
+Would you like me to build that next?
