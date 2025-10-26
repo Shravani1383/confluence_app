@@ -40,3 +40,78 @@ By combining incremental data updates, semantic chunking, GPU-based parallel emb
 [8](https://community.atlassian.com/forums/Confluence-questions/How-to-extract-a-Confluence-space-the-whole-page-tree-data-for/qaq-p/2996638)
 [9](https://www.reddit.com/r/mlops/comments/1i5vzlf/building_a_rag_chatbot_for_company_need_advice_on/)
 [10](https://developer.atlassian.com/server/confluence/confluence-rest-api-examples/)
+
+
+import asyncio
+import aiohttp
+import json
+from urllib.parse import quote_plus
+from typing import Sequence
+
+ALM_CONFLUENCE_BASE_URL = "https://alm-confluence.example.com"
+MPB_CONFLUENCE_BASE_URL = "https://mpb-confluence.example.com"
+DOMAIN_USER = "user@example.com"
+DOMAIN_PASSWORD = "password"
+CERT_FILE = "/path/to/cert"
+PROXIES = None  # or {"https": "https://proxy"}
+
+# ---------- Build CQL ----------
+def build_cql(keywords: Sequence[str]) -> str:
+    parts = [f'text~"{kw}"' for kw in keywords if kw]
+    return " OR ".join(parts)
+
+# ---------- Async Fetch ----------
+async def fetch_confluence_search(session: aiohttp.ClientSession, base_url: str, cql: str, limit: int = 10):
+    url = f"{base_url}/rest/api/search?cql={quote_plus(cql)}&limit={limit}"
+    async with session.get(url, ssl=CERT_FILE, proxy=PROXIES) as resp:
+        if resp.status != 200:
+            text = await resp.text()
+            print(f"[ERROR] {base_url} returned {resp.status}: {text[:200]}")
+            return None
+        return await resp.json()
+
+# ---------- Parse Response ----------
+def parse_confluence_response(resp: dict, source: str) -> list[dict]:
+    if not resp or "results" not in resp:
+        return []
+    urls = []
+    for page in resp["results"]:
+        if page.get("type") == "attachment":
+            continue
+        title = page.get("title", "")
+        space_key = page.get("space", {}).get("key", "")
+        title_url = quote_plus(title)
+        page_id = page.get("id", "")
+        if source == "alm":
+            url = f"{ALM_CONFLUENCE_BASE_URL}/spaces/{space_key}/pages/{page_id}/{title_url}"
+        else:
+            url = f"{MPB_CONFLUENCE_BASE_URL}/display/{space_key}/{title_url}"
+        urls.append({"title": title, "space_key": space_key, "url": url, "source": source})
+    return urls
+
+# ---------- Orchestrator ----------
+async def search_confluence_pages_async(keywords: list[str], max_results: int = 10, source: str = "alm") -> list[dict]:
+    cql = build_cql(keywords)
+    auth = aiohttp.BasicAuth(DOMAIN_USER, DOMAIN_PASSWORD)
+
+    async with aiohttp.ClientSession(auth=auth, connector=aiohttp.TCPConnector(limit=50)) as session:
+        tasks = []
+        if source in ("alm", "both"):
+            tasks.append(fetch_confluence_search(session, ALM_CONFLUENCE_BASE_URL, cql, max_results))
+        if source in ("wpb", "both"):
+            tasks.append(fetch_confluence_search(session, MPB_CONFLUENCE_BASE_URL, cql, max_results))
+
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        urls = []
+        for idx, resp in enumerate(responses):
+            src = "alm" if idx == 0 else "wpb"
+            urls.extend(parse_confluence_response(resp, src))
+
+        # Optional: Keep top 5 from each
+        alm_urls = [u for u in urls if u["source"] == "alm"][:5]
+        wpb_urls = [u for u in urls if u["source"] == "wpb"][:5]
+        return alm_urls + wpb_urls
+
+# ---------- Sync Wrapper ----------
+def search_confluence_pages(keywords: list[str], max_results: int = 10, source: str = "alm") -> list[dict]:
+    return asyncio.run(search_confluence_pages_async(keywords, max_results, source))
