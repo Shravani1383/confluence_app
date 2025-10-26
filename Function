@@ -1,0 +1,18 @@
+import numpy as np, faiss
+
+class HybridRetriever:
+    def __init__(self, embeddings, chunks):
+        self.chunks = chunks
+        arr = np.stack(embeddings).astype("float32")
+        self.index = faiss.IndexFlatIP(arr.shape[1])
+        self.index.add(arr)
+
+    def retrieve(self, query_emb, top_k=20, filters=None):
+        query_emb = query_emb / np.linalg.norm(query_emb)
+        D, I = self.index.search(query_emb.reshape(1, -1), top_k)
+        results = []
+        for i, idx in enumerate(I[0]):
+            chunk = self.chunks[idx]
+            if not filters or all(chunk.get(k) == v for k, v in filters.items()):
+                results.append((chunk, float(D[0][i])))
+        return results
