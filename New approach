@@ -44,7 +44,6 @@ By combining incremental data updates, semantic chunking, GPU-based parallel emb
 
 import asyncio
 import aiohttp
-import json
 from urllib.parse import quote_plus
 from typing import Sequence
 
@@ -53,7 +52,7 @@ MPB_CONFLUENCE_BASE_URL = "https://mpb-confluence.example.com"
 DOMAIN_USER = "user@example.com"
 DOMAIN_PASSWORD = "password"
 CERT_FILE = "/path/to/cert"
-PROXIES = None  # or {"https": "https://proxy"}
+PROXIES = None  # e.g. {"https": "https://proxy"}
 
 # ---------- Build CQL ----------
 def build_cql(keywords: Sequence[str]) -> str:
@@ -63,30 +62,47 @@ def build_cql(keywords: Sequence[str]) -> str:
 # ---------- Async Fetch ----------
 async def fetch_confluence_search(session: aiohttp.ClientSession, base_url: str, cql: str, limit: int = 10):
     url = f"{base_url}/rest/api/search?cql={quote_plus(cql)}&limit={limit}"
-    async with session.get(url, ssl=CERT_FILE, proxy=PROXIES) as resp:
-        if resp.status != 200:
-            text = await resp.text()
-            print(f"[ERROR] {base_url} returned {resp.status}: {text[:200]}")
-            return None
-        return await resp.json()
+    try:
+        async with session.get(url, ssl=CERT_FILE, proxy=PROXIES) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                print(f"[ERROR] {base_url} returned {resp.status}: {text[:200]}")
+                return None
+            return await resp.json()
+    except Exception as e:
+        print(f"[EXCEPTION] Error fetching from {base_url}: {e}")
+        return None
 
 # ---------- Parse Response ----------
 def parse_confluence_response(resp: dict, source: str) -> list[dict]:
-    if not resp or "results" not in resp:
+    # ✅ Safe guard — handle None or non-dict responses
+    if not isinstance(resp, dict):
         return []
+    if "results" not in resp:
+        return []
+
     urls = []
-    for page in resp["results"]:
+    for page in resp.get("results", []):
         if page.get("type") == "attachment":
             continue
+
         title = page.get("title", "")
         space_key = page.get("space", {}).get("key", "")
         title_url = quote_plus(title)
         page_id = page.get("id", "")
+
         if source == "alm":
             url = f"{ALM_CONFLUENCE_BASE_URL}/spaces/{space_key}/pages/{page_id}/{title_url}"
         else:
             url = f"{MPB_CONFLUENCE_BASE_URL}/display/{space_key}/{title_url}"
-        urls.append({"title": title, "space_key": space_key, "url": url, "source": source})
+
+        urls.append({
+            "title": title,
+            "space_key": space_key,
+            "url": url,
+            "source": source
+        })
+
     return urls
 
 # ---------- Orchestrator ----------
@@ -103,11 +119,15 @@ async def search_confluence_pages_async(keywords: list[str], max_results: int = 
 
         responses = await asyncio.gather(*tasks, return_exceptions=True)
         urls = []
+
         for idx, resp in enumerate(responses):
             src = "alm" if idx == 0 else "wpb"
+            if isinstance(resp, Exception):
+                print(f"[EXCEPTION] {src} search failed: {resp}")
+                continue
             urls.extend(parse_confluence_response(resp, src))
 
-        # Optional: Keep top 5 from each
+        # Optional: limit to top 5 per source
         alm_urls = [u for u in urls if u["source"] == "alm"][:5]
         wpb_urls = [u for u in urls if u["source"] == "wpb"][:5]
         return alm_urls + wpb_urls
