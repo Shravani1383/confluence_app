@@ -1,0 +1,7 @@
+def build_optimized_cql(keywords: Sequence[str]) -> str:
+    # Focus on title and label fields
+    words = [kw for kw in keywords if kw]
+    title_parts = [f'(title ~ "{word}")' for word in words]
+    label_parts = [f'(label IN ("{word}"))' for word in words]
+    combined = " OR ".join(title_parts + label_parts)
+    return f"({combined})"
