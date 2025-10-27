@@ -1,3 +1,36 @@
+const normalizeIndentation = (code) => {
+  const lines = code.split('\n');
+  const indent = lines
+    .filter(line => line.trim().length > 0)
+    .reduce((min, line) => {
+      const match = line.match(/^(\s+)/);
+      return match ? Math.min(min, match[1].length) : min;
+    }, Infinity);
+  return lines.map(line => line.slice(indent)).join('\n');
+};
+
+const CodeBlock = ({ code, language }) => {
+  const cleanCode = normalizeIndentation(code);
+
+  return (
+    <pre
+      style={{
+        backgroundColor: '#F4EEFF',
+        color: '#2D2D2D',
+        borderRadius: '8px',
+        padding: '0.7em',
+        fontFamily: 'JetBrains Mono, monospace',
+        whiteSpace: 'pre',
+        overflowX: 'auto',
+        lineHeight: 1.3,
+      }}
+    >
+      <code>{cleanCode}</code>
+    </pre>
+  );
+};
+
+
 background-color: #F4EEFF;
   color: #2D2D2D;
   border-radius: 8px;
