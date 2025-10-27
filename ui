@@ -1,0 +1,5 @@
+background-color: #F4EEFF;
+  color: #2D2D2D;
+  border-radius: 8px;
+  padding: 0.5em;
+  font-family: 'JetBrains Mono', monospace;
