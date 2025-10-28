@@ -1,0 +1,17 @@
+distances, indices = index.search(query_vec, k=5)
+scores = distances[0]
+
+mean_score = np.mean(scores)
+max_score = np.max(scores)
+
+# Dynamic threshold rule
+if max_score < 0.8 or (max_score - mean_score) < 0.05:
+    # low confidence or all results are similar = probably noise
+    trigger_fallback(query)
+else:
+    # confident match
+    relevant_docs = [docstore[i] for i in indices[0]]
+
+
+If all top results are close in score, it means the search couldn’t find anything sharply relevant (flat similarity curve).
+If one score stands out strongly, it’s likely truly relevant.
