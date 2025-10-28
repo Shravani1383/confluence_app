@@ -28,3 +28,20 @@ elif diff < DIFF_THRESHOLD and max_score < 0.85:
     trigger_fallback(query)
 else:
     proceed_with_docs()
+
+ABS_THRESHOLD = 0.80
+GAP_THRESHOLD = 0.10
+STRONG_THRESHOLD = 0.88
+
+max_score = np.max(scores)
+mean_score = np.mean(scores)
+diff = max_score - mean_score
+
+if max_score < ABS_THRESHOLD:
+    fallback()
+elif diff < GAP_THRESHOLD and max_score < STRONG_THRESHOLD:
+    fallback()
+elif max_score < 0.86 and mean_score > 0.70:
+    fallback()
+else:
+    proceed()
