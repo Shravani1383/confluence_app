@@ -15,3 +15,16 @@ else:
 
 If all top results are close in score, it means the search couldn’t find anything sharply relevant (flat similarity curve).
 If one score stands out strongly, it’s likely truly relevant.
+
+ABS_THRESHOLD = 0.80
+DIFF_THRESHOLD = 0.05
+max_score = np.max(scores)
+mean_score = np.mean(scores)
+diff = max_score - mean_score
+
+if max_score < ABS_THRESHOLD:
+    trigger_fallback(query)
+elif diff < DIFF_THRESHOLD and max_score < 0.85:
+    trigger_fallback(query)
+else:
+    proceed_with_docs()
