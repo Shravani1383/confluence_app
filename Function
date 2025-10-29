@@ -143,3 +143,34 @@ async def search_confluence(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("confluence_search_api:app", host="0.0.0.0", port=8000, reload=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+🧠 To Plug In Your Own Auth
+
+Replace this stub inside ConfluenceClient.__init__():
+
+self.credentials = (user, password)
+
+
+with your own:
+
+from backend.integrations.rest_client import RestClient
+self.rest_client = RestClient(credentials=(user, password), proxies=proxies, cert_file=cert_file)
+
+
+and in async_search_pages(), replace the direct aiohttp call with:
+
+return await self.rest_client.async_get(endpoint, params=params)
