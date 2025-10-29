@@ -141,3 +141,6 @@ async def search_confluence(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("confluence_search_api:app", host="0.0.0.0", port=8000, reload=True)
+
+http://localhost:8000/api/search?query=setup%20python&source=both&limit=5
+
