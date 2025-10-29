@@ -1,34 +1,33 @@
 import asyncio
 from typing import Sequence
 from fastapi import FastAPI, Query
-import aiohttp
-
-# ============================================================
-# CONFIG (Replace with your internal config imports)
-# ============================================================
-
-ALM_CONFLUENCE_BASE_URL = "https://alm-confluence.systems.uk.hsbc/confluence"
-WPB_CONFLUENCE_BASE_URL = "https://wpb-confluence.systems.uk.hsbc/"
-DOMAIN_USER = "your_domain_user"
-DOMAIN_PASSWORD = "your_domain_password"
-CERT_FILE = None
-proxies = None
+from backend.integrations.rest_client import RestClient  # ✅ Use your existing RestClient
+from backend.core.config import (
+    ALM_CONFLUENCE_BASE_URL,
+    WPB_CONFLUENCE_BASE_URL,
+    DOMAIN_USER,
+    DOMAIN_PASSWORD,
+    proxies,
+)
+from backend.core.cert_config import CERT_FILE
 
 # ============================================================
 # CLIENT CLASS (Reuses same name / interface)
 # ============================================================
 
 class ConfluenceClient:
-    """Singleton async Confluence client."""
+    """Singleton Confluence client using internal RestClient."""
 
     _instance = None
     _init_args = None
 
     def __init__(self, user, password, proxies=None, cert_file=None):
-        # Stub: replace this with your RestClient auth logic
-        self.credentials = (user, password)
-        self.proxies = proxies
-        self.cert_file = cert_file
+        # ✅ Use your in-house RestClient for auth, SSL, proxy handling
+        self.rest_client = RestClient(
+            credentials=(user, password),
+            proxies=proxies,
+            cert_file=cert_file,
+        )
 
     @classmethod
     def get_instance(cls, user, password, proxies=None, cert_file=None):
@@ -39,23 +38,22 @@ class ConfluenceClient:
         return cls._instance
 
     async def async_search_pages(self, base_url: str, cql: str, limit: int = 10) -> dict:
-        """Perform async search via Confluence REST API."""
+        """
+        Perform async search using your RestClient.get()
+        This wraps the sync call inside a thread for FastAPI compatibility.
+        """
         endpoint = f"{base_url.rstrip('/')}/rest/api/content/search"
         params = {"cql": cql, "limit": limit}
+
         print(f"[DEBUG] Hitting endpoint: {endpoint}")
-
-        auth = aiohttp.BasicAuth(*self.credentials)
-
         try:
-            async with aiohttp.ClientSession(auth=auth) as session:
-                async with session.get(endpoint, params=params, ssl=False) as resp:
-                    if resp.status != 200:
-                        return {
-                            "error": f"{base_url} returned {resp.status}",
-                            "details": await resp.text(),
-                        }
-                    return await resp.json()
+            # ✅ Run sync call asynchronously (non-blocking)
+            response = await asyncio.to_thread(
+                lambda: self.rest_client.get(endpoint, params=params)
+            )
+            return response
         except Exception as e:
+            print(f"[ERROR] Confluence search failed for {base_url}: {e}")
             return {"error": str(e), "url": endpoint}
 
 
@@ -143,34 +141,3 @@ async def search_confluence(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("confluence_search_api:app", host="0.0.0.0", port=8000, reload=True)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-🧠 To Plug In Your Own Auth
-
-Replace this stub inside ConfluenceClient.__init__():
-
-self.credentials = (user, password)
-
-
-with your own:
-
-from backend.integrations.rest_client import RestClient
-self.rest_client = RestClient(credentials=(user, password), proxies=proxies, cert_file=cert_file)
-
-
-and in async_search_pages(), replace the direct aiohttp call with:
-
-return await self.rest_client.async_get(endpoint, params=params)
