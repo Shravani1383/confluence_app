@@ -1,38 +1,175 @@
-const normalizeIndentation = (code) => {
-  const lines = code.split('\n');
-  const indent = lines
-    .filter(line => line.trim().length > 0)
-    .reduce((min, line) => {
-      const match = line.match(/^(\s+)/);
-      return match ? Math.min(min, match[1].length) : min;
-    }, Infinity);
-  return lines.map(line => line.slice(indent)).join('\n');
-};
+Excellent question — and this is *exactly* where most Confluence search pipelines go wrong 👏
 
-const CodeBlock = ({ code, language }) => {
-  const cleanCode = normalizeIndentation(code);
+Let’s unpack this clearly. You’re absolutely right — when using **CQL (Confluence Query Language)** to fetch URLs, **you can’t just throw in a dozen keywords**.
+CQL isn’t a semantic search system — it’s literal and rank-based.
+If you send a query like:
 
-  return (
-    <pre
-      style={{
-        backgroundColor: '#F4EEFF',
-        color: '#2D2D2D',
-        borderRadius: '8px',
-        padding: '0.7em',
-        fontFamily: 'JetBrains Mono, monospace',
-        whiteSpace: 'pre',
-        overflowX: 'auto',
-        lineHeight: 1.3,
-      }}
-    >
-      <code>{cleanCode}</code>
-    </pre>
-  );
-};
+```cql
+type=page AND (title~"SSO" OR text~"authentication" OR text~"integration" OR text~"setup" OR text~"environment")
+```
 
+…it *can* slow down or return irrelevant results if not carefully controlled.
 
-background-color: #F4EEFF;
-  color: #2D2D2D;
-  border-radius: 8px;
-  padding: 0.5em;
-  font-family: 'JetBrains Mono', monospace;
+So, the key is to **extract multiple keywords** but then **select or compose them intelligently** for CQL.
+
+Here’s how to handle it optimally 👇
+
+---
+
+## ⚙️ Step 1: Extract Keywords (LLM or NLP)
+
+Use the advanced prompt (I’ll give that next) to get a JSON like:
+
+```json
+{
+  "must_have": ["SSO", "authentication"],
+  "nice_to_have": ["integration", "configuration", "environment"]
+}
+```
+
+---
+
+## ⚙️ Step 2: Build a *Weighted or Priority-Based CQL Query*
+
+Confluence CQL supports fuzzy search via `~` but has no ranking system by default.
+You can simulate ranking or precision by using **logical layers**:
+
+### Option A: Precise (small result set)
+
+If you just want **top, fast, high-precision** URLs:
+
+```cql
+type=page AND (title~"SSO" OR text~"SSO")
+```
+
+### Option B: Balanced (recommended)
+
+If you want *balance between recall and speed*:
+
+```cql
+type=page AND (title~"SSO" OR text~"SSO") AND (text~"authentication" OR text~"integration")
+```
+
+→ Combine **1–2 must-have** + **1–2 nice-to-have** keywords.
+You can also randomly rotate `nice_to_have` to get diversity over multiple requests.
+
+### Option C: Broad (fallback or secondary fetch)
+
+If nothing found in the first query:
+
+```cql
+type=page AND (text~"authentication" OR text~"integration" OR text~"configuration")
+```
+
+You can automate this logic:
+
+```python
+if no_results:  # fallback broad search
+    use more keywords
+```
+
+---
+
+## ⚙️ Step 3: Rank URLs Locally (after CQL)
+
+Once you fetch the results, run a **re-ranking step locally**:
+
+* Compute cosine similarity between query embedding and page title/text.
+* Sort and take top 10 URLs.
+
+So:
+1️⃣ use CQL only to get “candidates” fast
+2️⃣ then rank or refine locally with embeddings or heuristics.
+
+---
+
+## 🧠 Step 4: Final Optimized Prompt for Keyword Extraction (for CQL usage)
+
+Here’s your **production-ready hybrid prompt**:
+
+---
+
+> **Prompt (for your search engine):**
+>
+> You are an intelligent keyword extraction assistant for a documentation search engine that uses Confluence CQL queries.
+> Your goal is to convert a user’s natural language question into a small set of highly relevant keywords that can be used in CQL queries for fast and accurate search.
+>
+> **Guidelines:**
+>
+> * Return **2–6 concise keywords** or key phrases.
+> * Prioritize **nouns and technical terms** (like feature names, components, config items).
+> * Include **acronyms and abbreviations** (e.g. “SSO”, “CI/CD”, “API”).
+> * Avoid generic verbs (e.g. “how”, “setup”, “create”) unless part of a product term.
+> * Rank keywords by importance: “must_have” (core terms) and “nice_to_have” (context terms).
+> * Keep all terms short, lowercase, and suitable for CQL syntax.
+>
+> **Output only JSON:**
+>
+> ```json
+> {
+>   "must_have": ["..."],
+>   "nice_to_have": ["..."]
+> }
+> ```
+>
+> **Example Query:**
+> “How can I configure SSO integration for the development environment?”
+>
+> **Expected Output:**
+>
+> ```json
+> {
+>   "must_have": ["SSO", "authentication"],
+>   "nice_to_have": ["integration", "configuration", "dev environment"]
+> }
+> ```
+
+---
+
+## ⚙️ Step 5: CQL Builder Logic (Example Code)
+
+Here’s how you can safely use the output:
+
+```python
+def build_cql(keywords):
+    must = keywords.get("must_have", [])
+    nice = keywords.get("nice_to_have", [])
+    
+    # Use 1–2 must-have keywords + 1 nice-to-have
+    cql_parts = []
+    if must:
+        cql_parts.append(" OR ".join([f'title~"{k}" OR text~"{k}"' for k in must[:2]]))
+    if nice:
+        cql_parts.append(" OR ".join([f'text~"{k}"' for k in nice[:2]]))
+    
+    cql_query = "type=page AND (" + ") AND (".join(cql_parts) + ")"
+    return cql_query
+
+# Example usage
+keywords = {
+    "must_have": ["SSO", "authentication"],
+    "nice_to_have": ["integration", "configuration"]
+}
+print(build_cql(keywords))
+```
+
+✅ Output:
+
+```cql
+type=page AND (title~"SSO" OR text~"SSO" OR title~"authentication" OR text~"authentication") 
+AND (text~"integration" OR text~"configuration")
+```
+
+---
+
+So the full flow is:
+1️⃣ Query →
+2️⃣ Extract keywords (via prompt) →
+3️⃣ Build smart CQL →
+4️⃣ Fetch top URLs →
+5️⃣ Re-rank locally.
+
+---
+
+Would you like me to show you a **full working Python pipeline** (query in → CQL → fetch URLs → rerank top 10) using this logic?
+I can make it production-ready and modular (keyword extractor + CQL builder + ranker).
