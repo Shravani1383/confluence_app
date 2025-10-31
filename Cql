@@ -74,3 +74,143 @@ Guidelines:
 6. If the user says they don’t know or forgot the name of something (“I cannot name it”, “I misheard it”), include “unknown tool” or “unnamed system” in keywords to improve recall.
 7. Use natural domain inference — e.g. “quantum” → “quantum computing”.
 8. Ensure JSON is valid and properly closed (no markdown formatting, no code fences).
+
+
+import json
+import re
+
+def clean_llm_output(raw_response: str):
+    """
+    Cleans and validates LLM JSON output from the keyword extraction model.
+    Fixes formatting issues, ensures required keys exist,
+    and normalizes organization or extra tokens.
+    """
+    # Remove markdown/code formatting
+    cleaned = raw_response.strip()
+    cleaned = re.sub(r"```(?:json)?", "", cleaned).strip()
+    
+    # Try to safely load JSON
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        # Attempt recovery from minor format errors
+        try:
+            cleaned = re.sub(r"(\w+)\s*:", r'"\1":', cleaned)  # quote keys if missing
+            data = json.loads(cleaned)
+        except Exception as e:
+            raise ValueError(f"Malformed LLM JSON output: {e}\nRaw: {raw_response}")
+    
+    # Ensure all required keys exist
+    data.setdefault("intent", "")
+    data.setdefault("keywords", [])
+    data.setdefault("filters", [])
+    data.setdefault("search_target", "text")
+    data.setdefault("space", None)
+    data.setdefault("context", {"purpose": None, "domain": None})
+    
+    # Normalize context fields
+    context = data["context"]
+    if not isinstance(context, dict):
+        context = {"purpose": None, "domain": None}
+    context.setdefault("purpose", None)
+    context.setdefault("domain", None)
+    data["context"] = context
+
+    # Remove organization names if clearly not spaces
+    org_like = ["HSBC", "Google", "Microsoft", "Amazon", "Meta"]
+    data["keywords"] = [
+        kw for kw in data["keywords"] if kw not in org_like
+    ]
+    
+    # Deduplicate and clean keyword list
+    data["keywords"] = list(dict.fromkeys([kw.strip() for kw in data["keywords"] if kw.strip()]))
+
+    return data
+
+
+def build_cql(parsed_data: dict):
+    """
+    Builds a Confluence Query Language (CQL) query string from structured parsed data.
+    Integrates keywords, purpose, domain, and space when relevant.
+    """
+    keywords = parsed_data.get("keywords", [])
+    filters = parsed_data.get("filters", [])
+    search_target = parsed_data.get("search_target", "text")
+    space = parsed_data.get("space")
+    context = parsed_data.get("context", {})
+    purpose = context.get("purpose")
+    domain = context.get("domain")
+    
+    cql_clauses = []
+
+    # 1️⃣ Add keywords
+    if keywords:
+        if search_target == "title":
+            clause = " OR ".join([f'title ~ "{kw}"' for kw in keywords])
+        else:
+            clause = " OR ".join([f'text ~ "{kw}"' for kw in keywords])
+        cql_clauses.append(f"({clause})")
+
+    # 2️⃣ Add context-purpose hints
+    if purpose:
+        purpose_synonyms = {
+            "learning": ["learn", "training", "guide", "tutorial"],
+            "setup": ["configuration", "setup", "integration", "install"],
+            "troubleshooting": ["error", "fix", "resolve", "issue"],
+            "how-to": ["guide", "manual", "procedure"],
+            "policy lookup": ["policy", "update", "regulation", "rule"]
+        }
+        extra_terms = purpose_synonyms.get(purpose.lower(), [])
+        if extra_terms:
+            cql_clauses.append("(" + " OR ".join([f'text ~ "{t}"' for t in extra_terms]) + ")")
+
+    # 3️⃣ Add domain clues
+    if domain:
+        cql_clauses.append(f'(text ~ "{domain}")')
+
+    # 4️⃣ Add filters
+    for flt in filters:
+        if flt.lower() == "recent":
+            cql_clauses.append("created >= now(-30d)")
+        elif flt.lower() == "updated":
+            cql_clauses.append("lastmodified >= now(-30d)")
+
+    # 5️⃣ Add space condition
+    if space:
+        cql_clauses.append(f'space = "{space}"')
+
+    # Combine all
+    if not cql_clauses:
+        cql = 'type = "page"'
+    else:
+        cql = " AND ".join(cql_clauses)
+
+    # Always limit to pages (optional tweak)
+    cql = f"type = page AND ({cql})"
+
+    return cql
+
+
+# ------------------ DEMO EXAMPLE ------------------
+
+if __name__ == "__main__":
+    # Simulated raw LLM response (copy from your logs)
+    raw_llm_response = """```json
+    {
+        "intent": "find a document and instructions on accessing the tool",
+        "keywords": ["HSBC", "quantum"],
+        "filters": [],
+        "search_target": "text",
+        "space": null,
+        "context": {
+            "purpose": "learning",
+            "domain": "quantum"
+        }
+    }
+    ```"""
+
+    parsed = clean_llm_output(raw_llm_response)
+    cql_query = build_cql(parsed)
+
+    print("\n[Parsed Data]\n", json.dumps(parsed, indent=4))
+    print("\n[Generated CQL]\n", cql_query)
