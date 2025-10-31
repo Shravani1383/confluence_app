@@ -1,0 +1,242 @@
+Perfect 👌 — let’s take this to the next level.
+
+We’ll now make the **CQL builder fully space-aware**, so it can detect and handle queries like:
+
+> “Find onboarding pages in the HR space”
+> “Search the engineering documentation about SSO setup”
+
+That means the LLM will extract `"space": "HR"` or `"space": "engineering"`,
+and your Python builder will automatically include `space = "HR"` in the generated CQL.
+
+---
+
+## 🧠 Step 1: Updated LLM Prompt (Now With `space` Detection)
+
+Here’s your improved system/instruction prompt:
+
+````text
+You are a query understanding module for a Confluence chatbot.
+
+Your goal:
+1. Identify the user's **intent** (what they are trying to find).
+2. Extract main **keywords** (topics, entities, actions).
+3. Detect the **search target**:
+   - "title" → if the user mentions "page titled", "document named", etc.
+   - "text" → otherwise.
+4. Identify **filters** (e.g., "recent", "owner", "guide", "configuration").
+5. Detect **space or team name** mentioned (e.g., "HR space", "Engineering docs", "DevOps project").
+
+Output ONLY a valid JSON object in this format:
+```json
+{
+  "intent": "<short description>",
+  "keywords": ["<keyword1>", "<keyword2>", ...],
+  "filters": ["<filter1>", ...],
+  "search_target": "title" | "text",
+  "space": "<space key or name if mentioned, otherwise null>"
+}
+````
+
+````
+
+---
+
+### Example 1
+**User Query:**  
+> “Find onboarding documentation in HR space.”
+
+**Output:**
+```json
+{
+  "intent": "Find onboarding documentation in HR space",
+  "keywords": ["onboarding", "documentation"],
+  "filters": [],
+  "search_target": "text",
+  "space": "HR"
+}
+````
+
+---
+
+### Example 2
+
+**User Query:**
+
+> “Show me configuration guide for SSO integration in Engineering docs.”
+
+**Output:**
+
+```json
+{
+  "intent": "Find configuration guide for SSO integration in Engineering docs",
+  "keywords": ["configuration", "SSO", "integration"],
+  "filters": ["guide"],
+  "search_target": "text",
+  "space": "Engineering"
+}
+```
+
+---
+
+## ⚙️ Step 2: Python — Space-Aware Smart CQL Builder
+
+Here’s the final hybrid version:
+
+```python
+import json
+import re
+
+def build_cql(llm_output: str, default_content_type: str = "page") -> str:
+    """
+    Build a robust Confluence CQL query using extracted metadata.
+    Automatically supports title/text search, filters, and space detection.
+    """
+
+    try:
+        data = json.loads(llm_output)
+    except json.JSONDecodeError:
+        raise ValueError("Invalid LLM output — must be valid JSON.")
+
+    # Extract with defaults
+    keywords = data.get("keywords", [])
+    filters = [f.lower() for f in data.get("filters", [])]
+    search_target = data.get("search_target", "text").lower()
+    intent = data.get("intent", "").lower()
+    space = data.get("space")
+
+    cql_parts = [f"type = {default_content_type}"]
+
+    # ✅ Include space filter if provided
+    if space and isinstance(space, str) and space.strip():
+        # Sanitize for safe query usage
+        clean_space = re.sub(r'[^a-zA-Z0-9_-]', '', space)
+        cql_parts.append(f'space = "{clean_space}"')
+
+    # ✅ Keyword matching (title or text)
+    if keywords:
+        target_field = "title" if search_target == "title" else "text"
+        keyword_expr = " OR ".join([f'{target_field} ~ "{kw}"' for kw in keywords])
+        cql_parts.append(f"({keyword_expr})")
+    else:
+        cql_parts.append('text ~ "*"')
+
+    # ✅ Filter-based rules
+    if any(f in filters for f in ["owner", "responsible", "created by"]):
+        cql_parts.append("label = 'ownership'")
+
+    if any(f in filters for f in ["recent", "latest", "update"]):
+        cql_parts.append('lastmodified > now("-1w")')
+
+    if any(f in filters for f in ["guide", "configuration", "setup", "tutorial"]):
+        cql_parts.append('(label = "guide" OR label = "setup" OR label = "configuration" OR label = "tutorial")')
+
+    # ✅ Auto-detect title intent
+    title_patterns = ["page titled", "document titled", "document name", "file called", "article titled"]
+    if any(re.search(p, intent) for p in title_patterns) and search_target != "title":
+        cql_parts.append('(title ~ "*")')
+
+    # ✅ Smart fallback
+    if len(cql_parts) == 1:  # only type = page
+        cql_parts.append('text ~ "*"')
+
+    # Join with AND
+    cql_query = " AND ".join(cql_parts)
+    return cql_query
+```
+
+---
+
+## 🧪 Step 3: Example Runs
+
+### Example 1
+
+```python
+llm_output = """
+{
+  "intent": "Find onboarding documentation in HR space",
+  "keywords": ["onboarding", "documentation"],
+  "filters": [],
+  "search_target": "text",
+  "space": "HR"
+}
+"""
+print(build_cql(llm_output))
+```
+
+**Output:**
+
+```
+type = page AND space = "HR" AND (text ~ "onboarding" OR text ~ "documentation")
+```
+
+---
+
+### Example 2
+
+```python
+llm_output = """
+{
+  "intent": "Find configuration guide for SSO integration in Engineering docs",
+  "keywords": ["configuration", "SSO", "integration"],
+  "filters": ["guide"],
+  "search_target": "text",
+  "space": "Engineering"
+}
+"""
+print(build_cql(llm_output))
+```
+
+**Output:**
+
+```
+type = page AND space = "Engineering" AND (text ~ "configuration" OR text ~ "SSO" OR text ~ "integration") AND (label = "guide" OR label = "setup" OR label = "configuration" OR label = "tutorial")
+```
+
+---
+
+### Example 3
+
+```python
+llm_output = """
+{
+  "intent": "Find the page titled Product Roadmap 2025 in PM space",
+  "keywords": ["Product Roadmap 2025"],
+  "filters": [],
+  "search_target": "title",
+  "space": "PM"
+}
+"""
+print(build_cql(llm_output))
+```
+
+**Output:**
+
+```
+type = page AND space = "PM" AND (title ~ "Product Roadmap 2025")
+```
+
+---
+
+## 🧩 Step 4: Integration Flow
+
+Your chatbot flow can now be:
+
+```
+User Query
+   ↓
+LLM → outputs (intent, keywords, filters, search_target, space)
+   ↓
+build_cql() → builds CQL
+   ↓
+Confluence REST API (CQL Search)
+   ↓
+Fetch pages & use RAG / context builder
+   ↓
+Final Answer
+```
+
+---
+
+Would you like me to extend it one more step —
+so it can **auto-detect content type** too (like if user says “blog post”, “page”, or “attachment”)?
+That would make it nearly a full “CQL generator engine.”
