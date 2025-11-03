@@ -214,3 +214,10 @@ if __name__ == "__main__":
 
     print("\n[Parsed Data]\n", json.dumps(parsed, indent=4))
     print("\n[Generated CQL]\n", cql_query)
+
+
+
+
+aws iam simulate-principal-policy \
+  --policy-source-arn arn:aws:iam::<account-id>:user/opensearch-admin \
+  --action-names es:CreateDomain
