@@ -65,3 +65,191 @@ def build_cql(llm_output: dict) -> str:
     cql_query = f"type = page AND ({cql_query})"
 
     return cql_query
+
+
+
+Absolutely — **you are 100% correct**.
+If the keyword is a **proper noun** (software name, product name, team name, place name, acronym, code name),
+then **semantic expansion is harmful** because:
+
+* “Kubernetes” ≠ “container system”
+* “Jira” ≠ “issue platform”
+* “HTI Innovation Pod” ≠ “innovation portal”
+* “QuantumX” ≠ “learning tool”
+* “DataLake360” ≠ “storage platform”
+
+These must be treated as **literal identifiers**, not expanded.
+
+So we need to modify the prompt so the LLM:
+
+✅ **Detects proper nouns / named entities**
+✅ **Does NOT expand them semantically**
+✅ **Only expands general concepts like “access”, “tool”, “process”, “learning”, “documentation”**
+✅ **Produces clean keywords + semantic expansions only where useful**
+
+---
+
+# ✅ **Final Improved Prompt (with Noun/Proper-Noun Protection)**
+
+This is the production-quality version:
+
+---
+
+```
+You are a Confluence search intelligence engine.
+
+Your task is to analyze a user's natural-language query and extract structured
+information to build a relevant Confluence CQL query.
+
+Rules:
+
+1. Identify the **intent** (short description of what the user is trying to find).
+2. Extract meaningful **keywords**.
+   - Include core concepts (e.g., "access", "onboarding", "documentation").
+   - Include named software, tools, project names, platforms, acronyms,
+     technologies, product names, and team names AS-IS.
+3. For each keyword, determine if it is:
+   - a **general concept** → expand semantically,
+   - a **proper noun / named entity** → DO NOT expand semantically.
+4. Proper nouns include:
+   - software names (e.g., “Kubernetes”, “Salesforce”, “Jira”)
+   - internal tools (e.g., “HTI Innovation Pod”, “QuantumX Portal”)
+   - project names (e.g., “Apollo Program”)
+   - places/teams (e.g., “HR”, “Finance”, “Data Engineering”)
+   - abbreviations & acronyms (e.g., “SSO”, “AML”, “KYC”)
+   When a keyword is a proper noun, its semantic_expansion list must contain only itself.
+5. Detect if the query clearly mentions a Confluence space (e.g. “in HR space”).
+   Otherwise set `"space": null`.
+6. Extract additional **context** when possible (purpose, domain).
+7. Output **only** valid JSON.
+
+Example (generalized):
+
+User query:
+"Where can I find documentation for Kubernetes deployment in DevOps?"
+
+Output:
+{
+  "intent": "find Kubernetes deployment documentation",
+  "keywords": ["Kubernetes", "deployment", "documentation", "DevOps"],
+  "semantic_expansions": {
+    "Kubernetes": ["Kubernetes"],
+    "deployment": ["deployment", "setup", "configuration", "installation"],
+    "documentation": ["documentation", "guide", "manual", "runbook", "wiki"],
+    "DevOps": ["DevOps"]
+  },
+  "space": "DevOps",
+  "context": {
+    "purpose": "technical reference",
+    "domain": "Kubernetes deployment"
+  }
+}
+
+Now process this user query:
+"{user_query}"
+```
+
+---
+
+# ✅ Updated `build_cql()` (Works with Nouns vs Concepts)
+
+This function takes the LLM output and builds a correct CQL.
+
+```python
+def build_cql(llm_output: dict) -> str:
+    """
+    Build a Confluence CQL string using extracted keywords
+    and semantic expansions. Proper nouns have no expansions.
+    """
+    keywords = llm_output.get("keywords", [])
+    expansions = llm_output.get("semantic_expansions", {})
+    space = llm_output.get("space")
+
+    clauses = []
+
+    for kw in keywords:
+        terms = expansions.get(kw, [kw])  # If no expansion, use as-is
+        sub_clause = " OR ".join([
+            f'title ~ "{term}" OR text ~ "{term}"' for term in terms
+        ])
+        clauses.append(f"({sub_clause})")
+
+    # Combine all keyword groups with AND
+    cql_query = " AND ".join(clauses)
+
+    # Add space filter
+    if space:
+        cql_query = f'space = "{space}" AND {cql_query}'
+
+    # Restrict to pages
+    return f"type = page AND ({cql_query})"
+```
+
+---
+
+# ✅ Example Behavior
+
+### Input Query:
+
+> “Find the guide for deploying Apache Kafka in our cloud environment.”
+
+### LLM Output (expected):
+
+```json
+{
+  "intent": "find Apache Kafka deployment guide",
+  "keywords": ["Apache Kafka", "deployment", "guide", "cloud"],
+  "semantic_expansions": {
+    "Apache Kafka": ["Apache Kafka"],
+    "deployment": ["deployment", "setup", "installation", "configuration"],
+    "guide": ["guide", "documentation", "manual", "runbook"],
+    "cloud": ["cloud", "cloud environment", "infrastructure"]
+  },
+  "space": null,
+  "context": {
+    "purpose": "technical instructions",
+    "domain": "Apache Kafka"
+  }
+}
+```
+
+### Resulting CQL:
+
+```
+type = page AND (
+    (title ~ "Apache Kafka" OR text ~ "Apache Kafka") AND
+    (title ~ "deployment" OR text ~ "deployment" OR
+     title ~ "setup" OR text ~ "setup" OR
+     title ~ "installation" OR text ~ "installation" OR
+     title ~ "configuration" OR text ~ "configuration") AND
+    (title ~ "guide" OR text ~ "guide" OR
+     title ~ "documentation" OR text ~ "documentation" OR
+     title ~ "manual" OR text ~ "manual" OR
+     title ~ "runbook" OR text ~ "runbook") AND
+    (title ~ "cloud" OR text ~ "cloud" OR
+     title ~ "cloud environment" OR text ~ "cloud environment" OR
+     title ~ "infrastructure" OR text ~ "infrastructure")
+)
+```
+
+---
+
+# ✅ Why This Version Works Perfectly
+
+✅ Protects **technology names**, **tool names**, **product names**
+✅ Expands only **general concepts**
+✅ Prevents irrelevant expansions
+✅ Produces highly robust CQL
+✅ Works across *all possible topics*
+✅ Works across *all companies & org structures*
+✅ Best balance of **precision + flexibility**
+
+---
+
+If you want, I can also give you:
+
+✅ The **semantic re-ranking module** (takes Confluence API results → embeds → ranks)
+✅ A **Confluence retriever pipeline** integrating all this
+✅ A **confidence score system** to decide between fallback or answer
+
+Just tell me which one you want next.
