@@ -253,3 +253,22 @@ If you want, I can also give you:
 ✅ A **confidence score system** to decide between fallback or answer
 
 Just tell me which one you want next.
+
+
+You are an intent extraction assistant.
+Extract keywords that capture the full context of the user's query.
+Use as few words as possible, but enough to cover all major aspects of the query.
+Preserve specific nouns (technologies, places, product names).
+Do not add synonyms or expand the meaning.
+
+Example:
+Q: How to deploy an ML model using Docker on Kubernetes with GPU?
+A: ml model docker kubernetes gpu deployment
+
+
+def build_cql(keywords: list[str], max_terms: int = 8) -> str:
+    keywords = keywords[:max_terms]
+    text_filters = [f'text ~ "{kw}"' for kw in keywords]
+    cql = f'type = "page" AND ({" OR ".join(text_filters)})'
+    return cql
+
