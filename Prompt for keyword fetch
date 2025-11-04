@@ -272,3 +272,114 @@ def build_cql(keywords: list[str], max_terms: int = 8) -> str:
     cql = f'type = "page" AND ({" OR ".join(text_filters)})'
     return cql
 
+
+
+
+
+
+Perfect — that’s exactly the right direction. 👏
+
+You’re thinking like a designer of a *production-grade* retrieval layer — ensuring both **consistent parsing** and **logical query scoping** (only searching in specific Confluence spaces when intended).
+
+Let’s build a **precise and reliable prompt** and the **corresponding build_cql() function**.
+
+---
+
+## 🧠 Intent Extraction Prompt (Finalized)
+
+Here’s a **robust and general-purpose** prompt for extracting clean, Confluence-ready keywords:
+
+---
+
+**Prompt:**
+
+```
+You are an intent extraction assistant for a Confluence search system.
+
+Your task:
+1. Analyze the user's query and extract the core keywords that best represent the user's intent.
+2. Include only essential words that capture what the user is actually looking for.
+3. Preserve specific nouns (like product names, software tools, frameworks, or places) exactly as written.
+4. Do NOT add synonyms or rephrase.
+5. Use as few words as possible while keeping full context.
+6. Include the Confluence space name ONLY if it is explicitly mentioned in the user query.
+7. Do NOT include common filler words like "how", "can", "the", "is", etc.
+8. Output must be in the following JSON format:
+   {
+     "keywords": ["word1", "word2", "word3"],
+     "space": "SPACE_NAME or null"
+   }
+
+Examples:
+Q: "How to integrate Jira with Confluence?"
+A: {"keywords": ["integrate", "jira", "confluence"], "space": null}
+
+Q: "Show pages related to network issues in IT Support space"
+A: {"keywords": ["network", "issues"], "space": "IT Support"}
+
+Q: "Troubleshooting ML model deployment"
+A: {"keywords": ["ml", "model", "deployment"], "space": null}
+```
+
+---
+
+## 🧩 Python Function: `build_cql()`
+
+Now, we’ll construct the **CQL query** dynamically based on these extracted keywords and optional space.
+
+```python
+def build_cql(intent: dict, max_terms: int = 8) -> str:
+    """
+    Build a Confluence CQL query from extracted intent.
+    intent = {"keywords": [...], "space": "..." or None}
+    """
+    keywords = intent.get("keywords", [])[:max_terms]
+    space = intent.get("space")
+
+    # Build text query for keywords
+    text_filters = [f'text ~ "{kw}"' for kw in keywords]
+    query = f'type = "page" AND ({" OR ".join(text_filters)})'
+
+    # Add space filter if explicitly mentioned
+    if space:
+        query += f' AND space = "{space}"'
+
+    return query
+```
+
+---
+
+## ✅ Example
+
+```python
+intent = {
+  "keywords": ["jira", "integration", "confluence"],
+  "space": None
+}
+print(build_cql(intent))
+```
+
+**Output:**
+
+```
+type = "page" AND (text ~ "jira" OR text ~ "integration" OR text ~ "confluence")
+```
+
+If the user said “in IT Support space”, then:
+
+```
+type = "page" AND (text ~ "network" OR text ~ "issues") AND space = "IT Support"
+```
+
+---
+
+This design gives you:
+
+* 🎯 Deterministic output structure
+* ⚡ Reliable downstream parsing
+* 🧩 Optional scoping to specific spaces
+* 🔍 Flexible keyword count while maintaining precision
+
+---
+
+Would you like me to extend this so it can **auto-fallback to semantic similarity** (e.g., via embeddings) when Confluence search gives too few results? That would make it production-ready.
