@@ -92,3 +92,5 @@
 * It is **RAG-ready** — you can pass this JSON directly into your retriever.
 * It automatically handles **multi-intent**, **query expansion**, and **syntactic validation** for CQL.
 
+  "cql_query": "((text~'Quantum' OR text~'Quantum Learning' OR text~'Knowledge Hub') AND (text~'find' OR text~'discover' OR text~'search') AND (text~'Confluence' OR text~'Knowledge Base' OR text~'Training'))"
+   
