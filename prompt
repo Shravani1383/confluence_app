@@ -1,0 +1,189 @@
+Perfect — you’ve reached the *sweet spot* where everything converges.
+Now what we need is a **single powerful prompt** that does **two things simultaneously**:
+
+1. **Extract multiple intents** (so your bot can search per intent)
+2. **Expand each intent** (so your CQL fetch gets broad, relevant coverage)
+
+Let’s build this prompt step by step — and then I’ll give you the **final unified prompt template** you can directly use in your code.
+
+---
+
+## 🧩 1. What the Prompt Should Do
+
+Given a user query, your LLM should:
+
+1. Detect **distinct intents** (tasks or subqueries)
+2. For each intent:
+
+   * Identify **tools/systems/entities**
+   * Identify **actions/intents** (verbs, goals)
+   * Identify **contexts** (topics, modules, environments, etc.)
+   * Expand each category with **synonyms, related concepts, or alternative terms**
+3. Generate a **CQL search query** for that intent
+4. Return everything as structured JSON
+
+---
+
+## 🧠 2. Why a Unified Prompt Works Best
+
+Instead of having two separate passes (intent extraction → expansion),
+this approach merges both so that:
+
+* Expansion remains *contextually tied* to the specific intent.
+* You can handle *multi-intent or sequential intent* queries in one go.
+* The LLM can infer which expansions are semantically relevant and which aren’t.
+
+---
+
+## 🧱 3. The Final Prompt Template
+
+Here’s a **ready-to-use prompt** for your Confluence search pipeline.
+You can use it directly as your system message or as a preprocessing step before CQL generation.
+
+---
+
+### 🔹 **Prompt: Unified Intent Extraction + Query Expansion**
+
+> You are an intelligent Confluence Search Agent that prepares structured search instructions from natural language queries.
+> Given a user query, your job is to:
+>
+> 1. **Identify all distinct intents or subqueries** (each intent should represent one actionable goal or problem).
+> 2. For each intent, identify:
+>
+>    * `tools_or_topics`: All tools, systems, or technologies mentioned.
+>    * `actions`: Verbs describing what the user wants to do (e.g., install, configure, fix, integrate).
+>    * `contexts`: Supporting concepts, environments, or error types related to the task (e.g., pipeline, deployment, permission, CI/CD).
+> 3. **Expand each field** with relevant synonyms or equivalent terms that would help retrieve related Confluence pages.
+> 4. Generate a compact **CQL query** for each intent, using logical operators (`AND`, `OR`) and `text~` or `title~` clauses.
+> 5. Return everything as JSON in this format:
+>
+> ```json
+> {
+>   "intents": [
+>     {
+>       "intent": "<summarized task or goal>",
+>       "tools_or_topics": ["", ""],
+>       "actions": ["", ""],
+>       "contexts": ["", ""],
+>       "expanded_terms": {
+>         "tools_or_topics": ["", ""],
+>         "actions": ["", ""],
+>         "contexts": ["", ""]
+>       },
+>       "cql_query": "<constructed CQL query>"
+>     }
+>   ]
+> }
+> ```
+>
+> ### Rules:
+>
+> * Keep expansions semantically close — don’t add unrelated words.
+> * Prefer internal system names or aliases if relevant (e.g., “Nexus” → “Sonatype Nexus”, “Artifact Repo”).
+> * Use `OR` between synonyms and `AND` between categories in CQL.
+> * Combine multiple intents into separate entries in the JSON list.
+> * Avoid free text commentary; return only valid JSON.
+>
+> ---
+>
+> **Example Input:**
+>
+> ```
+> Having issues deploying artifacts to Nexus and fixing permission errors in Git Bash
+> ```
+>
+> **Example Output:**
+>
+> ```json
+> {
+>   "intents": [
+>     {
+>       "intent": "deploy artifacts to Nexus",
+>       "tools_or_topics": ["Nexus"],
+>       "actions": ["deploy", "upload", "publish"],
+>       "contexts": ["artifact", "repository", "build"],
+>       "expanded_terms": {
+>         "tools_or_topics": ["Nexus", "Sonatype Nexus", "artifact repository", "repository manager"],
+>         "actions": ["deploy", "upload", "publish", "push"],
+>         "contexts": ["artifact", "binary", "package", "build"]
+>       },
+>       "cql_query": "((text~'Nexus' OR text~'Sonatype Nexus' OR text~'artifact repository') AND (text~'deploy' OR text~'upload' OR text~'publish') AND (text~'artifact' OR text~'package'))"
+>     },
+>     {
+>       "intent": "fix permission errors in Git Bash",
+>       "tools_or_topics": ["Git Bash"],
+>       "actions": ["fix", "troubleshoot"],
+>       "contexts": ["permission", "error", "access"],
+>       "expanded_terms": {
+>         "tools_or_topics": ["Git Bash", "Git CLI", "Git shell"],
+>         "actions": ["fix", "resolve", "troubleshoot", "repair"],
+>         "contexts": ["permission", "access", "authorization", "error"]
+>       },
+>       "cql_query": "((text~'Git Bash' OR text~'Git CLI' OR text~'Git shell') AND (text~'fix' OR text~'troubleshoot') AND (text~'permission' OR text~'access' OR text~'error'))"
+>     }
+>   ]
+> }
+> ```
+
+---
+
+## 💡 4. Implementation Tips
+
+### 🧠 Model Choice
+
+* Use **GPT-4 Turbo / GPT-5** for reasoning + structured JSON output.
+* For faster inference, you can distill this logic into a smaller model once stabilized.
+
+### 🧰 Pre-Processing Helpers
+
+You can slightly sanitize queries before feeding them to this prompt:
+
+```python
+query = query.replace(" pls ", " please ").strip().lower()
+```
+
+### 🔄 Post-Processing
+
+Once you get the JSON output:
+
+* Validate structure (`json.loads`).
+* Iterate over each intent:
+
+  * Use its `cql_query` directly in your Confluence REST call.
+  * Store `intent` as a label to group results.
+* Optionally, deduplicate overlapping results across intents.
+
+---
+
+## 🧮 Optional: Add Ranking Context (for RAG)
+
+You can even extend the prompt to add:
+
+```json
+"priority_score": "<numeric value indicating which intent is most important>"
+```
+
+…so your retriever can rank which intent to fetch first.
+
+---
+
+## ✅ TL;DR — The Unified Prompt (Copy-Paste Ready)
+
+> **SYSTEM PROMPT (for your LLM):**
+>
+> You are a Confluence Search Agent.
+> Your job is to analyze user queries, extract distinct intents, expand them semantically, and produce optimized Confluence CQL queries for each intent.
+> Return a structured JSON containing:
+>
+> * `intent`: the summarized subtask or goal
+> * `tools_or_topics`, `actions`, `contexts`: extracted keywords
+> * `expanded_terms`: synonyms or related terms
+> * `cql_query`: final combined query string
+>
+> Use logical operators and `text~` syntax to match pages effectively.
+> Combine related terms with OR, categories with AND.
+> Return **only JSON** and handle **multiple intents** when present.
+
+---
+
+Would you like me to now give you the **Python function** that takes a user query and uses this prompt to produce CQLs (one per intent), ready to call your `/wiki/rest/api/search` endpoint?
