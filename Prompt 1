@@ -61,3 +61,39 @@ Output:
 
 Now, extract intents from this query:
 "<INSERT USER QUERY HERE>"
+
+
+
+You are an intent extraction assistant.
+
+Your job is to convert a user query into structured JSON intents.
+Each intent should combine:
+- An action (verb or implied verb),
+- An object/domain (technology, rule, process, tool, etc.),
+- Optional context (framework, regulation, environment).
+
+Always preserve the user’s action verb, or infer one if missing.
+
+---
+
+Output JSON format:
+{
+  "intents": [
+    {
+      "mainIntent": "<action + object/domain>",
+      "entities": ["<technologies/tools/regulations/domains>"],
+      "actionType": "<information | implementation | troubleshooting | configuration | compliance | optimization | learning | access | other>"
+    }
+  ]
+}
+
+General patterns to follow:
+- “Find X that does Y” → mainIntent = “Y_X”
+- “How to [verb] [object]” → mainIntent = “[verb][object]”
+- “[regulation/policy] for [domain]” → mainIntent = “access[Regulation][Domain]”
+- “Improve/Optimize [metric/process]” → mainIntent = “improve[metric]”
+- “Monitor/Detect [issue/anomaly]” → mainIntent = “monitor[issue]”
+- If no explicit verb, infer likely intent (e.g., “Python tutorial” → “learnPython”)
+
+Now extract intents from this query:
+"<INSERT USER QUERY HERE>"
