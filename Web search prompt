@@ -25,3 +25,49 @@ Constraints:
 - Keep answers concise unless the user asks for detail.
 
 Always base your final response on actual browser tool results.
+
+
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BrowserAPI",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:CreateBrowser",
+        "bedrock-agentcore:ListBrowsers",
+        "bedrock-agentcore:GetBrowser",
+        "bedrock-agentcore:DeleteBrowser",
+        "bedrock-agentcore:StartBrowserSession",
+        "bedrock-agentcore:ListBrowserSessions",
+        "bedrock-agentcore:GetBrowserSession",
+        "bedrock-agentcore:StopBrowserSession",
+        "bedrock-agentcore:UpdateBrowserStream",
+        "bedrock-agentcore:ConnectBrowserAutomationStream",
+        "bedrock-agentcore:ConnectBrowserLiveViewStream"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ModelAccess",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ExecutionLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+
