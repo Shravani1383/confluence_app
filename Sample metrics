@@ -1,0 +1,57 @@
+{
+  "page_id": "123456",
+  "page_title": "Example Page",
+  "ingestion_timestamp": "2025-01-01T10:00:00Z",
+
+  "stats": {
+    "blocks": 79,
+    "headings": 14,
+    "paragraphs": 46,
+    "code_blocks": 2,
+    "tables": 0,
+    "macros": 1,
+    "attachments": 16,
+    "image_attachments": 15,
+    "file_attachments": 1,
+    "comments": 10
+  },
+
+  "attachments": {
+    "download_attempted": 16,
+    "download_success": 15,
+    "download_failures": [
+      {
+        "attachment_id": "789",
+        "filename": "broken.png",
+        "reason": "404 Not Found",
+        "attempts": 3
+      }
+    ]
+  },
+
+  "extraction": {
+    "images": {
+      "attempted": 15,
+      "success": 14,
+      "failures": [
+        {
+          "attachment_id": "789",
+          "reason": "invalid PNG format"
+        }
+      ]
+    },
+    "pdf": {
+      "attempted": 1,
+      "success": 1,
+      "failures": []
+    },
+    "macros": {
+      "attempted": 1,
+      "success": 1,
+      "failures": []
+    }
+  },
+
+  "status": "PARTIAL_SUCCESS",  
+  "errors": []
+}
