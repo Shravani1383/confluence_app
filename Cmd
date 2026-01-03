@@ -1,9 +1,0 @@
-aws rds describe-db-cluster-parameters \
-  --db-cluster-parameter-group-name <your-cluster-parameter-group> \
-  --query "Parameters[?ParameterName=='shared_preload_libraries' || \
-                       ParameterName=='pgaudit.log' || \
-                       ParameterName=='pgaudit.role' || \
-                       ParameterName=='log_connections' || \
-                       ParameterName=='log_disconnections' || \
-                       ParameterName=='log_error_verbosity'].[ParameterName,ParameterValue,ApplyStatus]" \
-  --output table
