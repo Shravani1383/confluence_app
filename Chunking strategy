@@ -1,0 +1,389 @@
+Got it 👍
+FAISS + local storage is **perfectly fine** for your use case **as long as you structure it correctly**. The key thing to understand is:
+
+> **FAISS is only a vector index, not a database.**
+> So you must design a **sidecar storage layout** that makes it portable, scalable, and recoverable.
+
+Below is a **clean, battle-tested FAISS + local architecture** you can scale and move later without pain.
+
+---
+
+# 🧱 Correct FAISS + Local Storage Architecture
+
+## 🔑 Golden Rule
+
+**FAISS stores vectors only.
+Everything else must live outside FAISS.**
+
+---
+
+## 📁 Recommended Directory Structure
+
+```text
+embeddings_store/
+├── index/
+│   ├── vocab.index            # FAISS index (vectors only)
+│   ├── vocab.index.meta.json  # index-level metadata
+│
+├── records/
+│   ├── vocab_records.jsonl    # one JSON per embedding
+│
+├── maps/
+│   ├── id_to_faiss_id.json    # stable_id → faiss_int_id
+│   ├── faiss_id_to_id.json    # faiss_int_id → stable_id
+│
+├── snapshots/
+│   ├── snapshot_2026-01-10/
+│
+└── README.md
+```
+
+---
+
+# 🧩 Embedding Record Format (JSONL – IMPORTANT)
+
+Each line in `vocab_records.jsonl`:
+
+```json
+{
+  "id": "cxd_vocab_000123",
+  "faiss_id": 98712,
+  "embedding_model": "text-embeddings-3-small",
+  "embedding_dim": 1536,
+  "embedding_version": "v1",
+  "text_hash": "sha256:ab93...",
+  "source_text": "Internal vocabulary term. Good Service Standards.",
+  "metadata": {
+    "space": "CXD - Customer Design Library",
+    "domain": "customer_design",
+    "status": "active"
+  },
+  "created_at": "2026-01-10T12:00:00Z"
+}
+```
+
+📌 JSONL is:
+
+* Streamable
+* Append-only
+* Easy to migrate to any DB later
+
+---
+
+# 🧠 FAISS Index Strategy (VERY IMPORTANT)
+
+## Use **IndexFlatIP** or **IndexHNSWFlat**
+
+```python
+index = faiss.IndexFlatIP(1536)  # cosine similarity
+```
+
+Normalize embeddings before adding.
+
+### Why?
+
+* Portable
+* Deterministic
+* No training required
+* Easy rebuild
+
+❌ Avoid IVF/PQ for now (harder to migrate, tune, debug)
+
+---
+
+# 🔄 ID Management (Critical for Portability)
+
+### DO NOT rely on FAISS internal ordering
+
+Use **explicit ID mapping**:
+
+```python
+index = faiss.IndexIDMap(index)
+index.add_with_ids(vectors, ids)
+```
+
+Where:
+
+* `ids` = deterministic integers
+* Derived from your stable string IDs
+
+Example:
+
+```python
+faiss_id = hash("cxd_vocab_000123") % 2**63
+```
+
+---
+
+# 🧪 Content Hashing (Mandatory)
+
+Before embedding:
+
+```python
+text_hash = sha256(source_text)
+```
+
+Store it.
+
+Why:
+
+* Skip unchanged data
+* Detect drift
+* Rebuild safely
+
+---
+
+# 📦 Backup & Restore (Local-Friendly)
+
+### Snapshot = 3 things
+
+1. `vocab.index`
+2. `vocab_records.jsonl`
+3. ID mapping files
+
+Restore = load all three.
+
+You can zip the entire folder and move it anywhere.
+
+---
+
+# 🔍 Query Flow (Correct Way)
+
+1. Embed query
+2. Search FAISS → returns `faiss_id`s
+3. Lookup records via `faiss_id_to_id.json`
+4. Filter by metadata (space, domain)
+5. Return vocabulary terms
+
+---
+
+# ⚠️ Common FAISS Mistakes (Avoid These)
+
+❌ No ID mapping
+❌ Storing metadata in memory only
+❌ No snapshot strategy
+❌ Mixing models in one index
+❌ Overwriting index without versioning
+❌ Not normalizing vectors
+
+---
+
+# 📈 Scaling Path (When You Grow)
+
+| Stage   | Action                       |
+| ------- | ---------------------------- |
+| 100k–1M | FAISS Flat (current)         |
+| 1M–5M   | FAISS HNSW                   |
+| 5M+     | Migrate to Qdrant / pgvector |
+| Cloud   | Upload JSONL + rebuild index |
+
+Because your records are clean → migration is trivial.
+
+---
+
+# ✅ Final Checklist (FAISS + Local)
+
+✔ FAISS stores vectors only
+✔ JSONL stores records
+✔ Explicit ID mapping
+✔ Content hashing
+✔ Versioned embeddings
+✔ Snapshot backups
+✔ Normalized vectors
+
+---
+
+## 🔥 Bottom Line
+
+Your setup is **valid, scalable, and safe**
+FAISS is fast
+Local storage is fine
+Portability is achieved through **discipline, not tooling**
+
+---
+
+Good call — chunking is **still relevant**, even though your data is vocabulary-style and stored in FAISS. I’ll tie it **directly** to your current setup and goal so it’s not generic advice.
+
+---
+
+# 🧩 Chunking Strategy (Specifically for Your FAISS + Vocabulary DB)
+
+## 🎯 Goal Reminder
+
+Your embeddings are used to:
+
+* Anchor **allowed vocabulary**
+* Constrain **query generation**
+* Prevent the bot from drifting outside known terms
+
+So chunking must preserve **atomic meaning**, not context.
+
+---
+
+# ✅ Correct Chunking Strategy (Final, Authoritative)
+
+## 🔹 Rule #1: One Concept = One Chunk
+
+For your toon file:
+
+```
+Space | Page Title | Labels
+```
+
+➡️ **Each row = exactly one chunk**
+
+Never:
+
+* Merge multiple rows
+* Split a single title
+* Add overlap
+
+This is **non-negotiable** for vocabulary grounding.
+
+---
+
+## 🔹 Rule #2: Chunk Text Should Be Minimal but Descriptive
+
+### ❌ Bad Chunk
+
+```text
+Good Service Standards
+```
+
+Too bare → ambiguous.
+
+### ✅ Good Chunk
+
+```text
+Internal vocabulary term.
+Good Service Standards.
+```
+
+### ✅ Best Chunk (balanced)
+
+```text
+Internal vocabulary term.
+Concept: Good Service Standards.
+```
+
+📌 This adds semantic stability without bloating tokens.
+
+---
+
+## 📏 Token Size Guidelines (For Your Use Case)
+
+| Metric               | Value            |
+| -------------------- | ---------------- |
+| **Tokens per chunk** | **20–60 tokens** |
+| **Hard max**         | **≤100 tokens**  |
+| **Overlap**          | **0**            |
+| **Chunk unit**       | 1 row / 1 title  |
+
+Your current ~22M tokens is **within ideal bounds**.
+
+---
+
+# 🧠 Chunking vs Metadata (Important Distinction)
+
+### What goes in the chunk text?
+
+✔ Concept name
+✔ Very light description
+
+### What goes in metadata?
+
+✔ Space
+✔ Domain
+✔ Labels
+✔ Status
+✔ Version
+
+**Never embed what metadata can express.**
+
+This keeps:
+
+* Vectors clean
+* Tokens low
+* Search precise
+
+---
+
+# 🔄 Chunking + FAISS Interaction
+
+FAISS sees:
+
+* A single vector per concept
+
+Your app layer handles:
+
+* Metadata filtering
+* Vocabulary constraints
+* Query grounding
+
+This separation is **exactly correct**.
+
+---
+
+# ⚠️ Chunking Anti-Patterns (Avoid These)
+
+❌ Paragraph-style chunks
+❌ Overlap
+❌ Sentence splitting
+❌ Embedding CSV rows verbatim
+❌ Embedding metadata repeatedly
+❌ Chunk sizes > 200 tokens
+
+All of these **hurt vocabulary grounding**.
+
+---
+
+# 🧪 How to Validate Your Chunking
+
+Test with **out-of-domain queries**:
+
+> “Generate a query for employee payroll forecasting”
+
+Expected:
+
+* Low similarity scores
+* No close matches
+* Bot refuses or redirects
+
+If it maps to something like *Service Standards* → chunking is too vague.
+
+---
+
+# 📦 Final Chunking Summary (TL;DR)
+
+✔ One row = one chunk
+✔ 20–60 tokens per chunk
+✔ No overlap
+✔ Minimal descriptive text
+✔ Metadata carries structure
+✔ FAISS stores vectors only
+
+---
+
+## 🧠 Bottom Line
+
+Your **chunking strategy is already correct** for:
+
+* FAISS
+* Local storage
+* Vocabulary anchoring
+* Query generation constraints
+
+You’re not building a document retriever — you’re building a **semantic vocabulary fence**, and your chunking reflects that perfectly.
+
+---
+
+If you want next, I can:
+
+* Define a **similarity threshold** for “out-of-vocabulary”
+* Help tune **cosine score cutoffs**
+* Design a **fallback behavior** when nothing matches
+* Review a **real FAISS search result** with you
+
+Just say the word 👌
+
+
