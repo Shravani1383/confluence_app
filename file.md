@@ -1,19 +1,17 @@
 from langchain_openai import AzureChatOpenAI
-from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain.prompts import ChatPromptTemplate
+from langchain.agents import initialize_agent, AgentType
 from langchain.tools import tool
 
-# ------------------------------------------------------------------
-# 1. Your existing imports / config
-# ------------------------------------------------------------------
 from common import gpt_4o_config
 from config.env_setup import init_env_and_session
 
-# Initialize env and session (as in your code)
+# ------------------------------------------------------------------
+# 1. Init env
+# ------------------------------------------------------------------
 session = init_env_and_session()
 
 # ------------------------------------------------------------------
-# 2. Initialize Azure OpenAI LLM (UNCHANGED from your usage)
+# 2. Azure OpenAI LLM
 # ------------------------------------------------------------------
 llm = AzureChatOpenAI(
     openai_api_version=gpt_4o_config["api_version"],
@@ -24,55 +22,35 @@ llm = AzureChatOpenAI(
 )
 
 # ------------------------------------------------------------------
-# 3. Define tools (agent capabilities)
+# 3. Tools
 # ------------------------------------------------------------------
 
 @tool
 def say_hello(name: str) -> str:
-    """Say hello to a user by name."""
+    """Say hello to a user."""
     return f"Hello {name}! 👋"
 
 @tool
 def add_numbers(a: int, b: int) -> int:
-    """Add two numbers together."""
+    """Add two numbers."""
     return a + b
 
 tools = [say_hello, add_numbers]
 
 # ------------------------------------------------------------------
-# 4. Create agent prompt
+# 4. Create agent (legacy API)
 # ------------------------------------------------------------------
-prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful AI assistant."),
-    ("human", "{input}"),
-    ("placeholder", "{agent_scratchpad}")
-])
-
-# ------------------------------------------------------------------
-# 5. Create the agent
-# ------------------------------------------------------------------
-agent = create_tool_calling_agent(
+agent = initialize_agent(
+    tools=tools,
     llm=llm,
-    tools=tools,
-    prompt=prompt
+    agent=AgentType.OPENAI_FUNCTIONS,  # IMPORTANT
+    verbose=True
 )
 
 # ------------------------------------------------------------------
-# 6. Create agent executor (runs the loop)
-# ------------------------------------------------------------------
-agent_executor = AgentExecutor(
-    agent=agent,
-    tools=tools,
-    verbose=True  # IMPORTANT: shows tool calls
-)
-
-# ------------------------------------------------------------------
-# 7. Run the agent
+# 5. Run agent
 # ------------------------------------------------------------------
 if __name__ == "__main__":
-    response = agent_executor.invoke({
-        "input": "Say hello to Alice and then add 4 and 7"
-    })
-
+    result = agent.invoke("Say hello to Bob and add 5 and 8")
     print("\nFINAL OUTPUT:")
-    print(response["output"])
+    print(result)
