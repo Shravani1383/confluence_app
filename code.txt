@@ -1,65 +1,55 @@
+from langchain.agents import create_agent
 from langchain.tools import tool
-from langchain.prompts import ChatPromptTemplate
-from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_openai import AzureChatOpenAI
+from langchain.messages import HumanMessage
 
 # -----------------------
 # Tools
 # -----------------------
 @tool
-def say_hello(name: str) -> str:
-    """Say hello to a user by name."""
-    return f"Hello {name}!"
+def search(query: str) -> str:
+    """Search for information."""
+    return f"Results for query: {query}"
 
 @tool
-def add(a: int, b: int) -> int:
-    """Add two integers."""
-    return a + b
+def get_weather(location: str) -> str:
+    """Get weather information for a location."""
+    return f"Weather in {location}: Sunny, 72°F"
 
-tools = [say_hello, add]
+tools = [search, get_weather]
 
 # -----------------------
-# LLM (Azure)
+# Model (Azure OpenAI)
 # -----------------------
-llm = AzureChatOpenAI(
+model = AzureChatOpenAI(
     azure_endpoint="https://<your-resource>.openai.azure.com/",
     azure_deployment="<your-deployment>",
     openai_api_version="2024-02-15-preview",
     model="gpt-4o-mini",
+    temperature=0.1,
+    max_tokens=1000,
+    timeout=30,
     validate_base_url=False,
 )
 
 # -----------------------
-# Prompt
+# Agent (LangGraph-based)
 # -----------------------
-prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", "You are a helpful assistant."),
-        ("human", "{input}"),
-        ("placeholder", "{agent_scratchpad}"),
-    ]
-)
-
-# -----------------------
-# Agent
-# -----------------------
-agent = create_openai_tools_agent(
-    llm=llm,
+agent = create_agent(
+    model=model,
     tools=tools,
-    prompt=prompt,
-)
-
-agent_executor = AgentExecutor(
-    agent=agent,
-    tools=tools,
-    verbose=True,
+    system_prompt="You are a helpful assistant. Be concise and accurate.",
 )
 
 # -----------------------
-# Run
+# Invoke
 # -----------------------
-result = agent_executor.invoke(
-    {"input": "Say hello to Bob and add 10 and 5"}
+result = agent.invoke(
+    {
+        "messages": [
+            HumanMessage(content="Search for AI news and summarize it")
+        ]
+    }
 )
 
 print(result["output"])
