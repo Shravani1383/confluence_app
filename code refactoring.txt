@@ -1,0 +1,303 @@
+Got you 😅 — this code *works*, but it’s doing **too many things at once**, which is why it feels messy and hard to reason about. The good news: this is a *perfect* candidate for refactoring into a **clean, testable, agent-ready architecture**.
+
+I’ll do three things for you:
+
+1. **Explain what’s wrong (at a structural level)**
+2. **Propose a clean architecture (agent-friendly & testable)**
+3. **Give you a refactored, organized version of your code (drop-in ready)**
+
+No fluff, just clean engineering.
+
+---
+
+## 1. What’s currently going wrong
+
+From your screenshots, the main problems are:
+
+### 🔴 Structural issues
+
+* URL parsing logic is duplicated **3+ times**
+* Fetch logic is mixed with:
+
+  * auth setup
+  * URL parsing
+  * response normalization
+  * HTML parsing
+* Functions do **too much** (hard to test)
+* Side effects (`print`, network calls) are mixed with pure logic
+
+### 🔴 Testing blockers
+
+* No clear separation between:
+
+  * **pure functions** (easy to unit test)
+  * **impure functions** (HTTP, credentials)
+* Hard to mock Confluence responses
+* No single “entrypoint” suitable for an AI agent tool
+
+---
+
+## 2. Target architecture (clean & agentic)
+
+Here’s the structure you *want* 👇
+
+```
+confluence/
+│
+├── models.py          # Typed data objects
+├── url_parser.py      # Pure URL parsing logic
+├── client.py          # REST client wrapper
+├── fetcher.py         # Page fetching (API orchestration)
+├── parser.py          # HTML → structured content
+├── orchestrator.py    # Agent-facing entrypoint
+└── exceptions.py      # Custom errors
+```
+
+### Why this is agent-ready
+
+* One **orchestrator** function = tool callable by an agent
+* Everything else is reusable, mockable, and testable
+* You can plug this into LangChain / OpenAI tools / MCP easily
+
+---
+
+## 3. Refactored implementation (clean & testable)
+
+Below is a **condensed but complete** refactor you can directly use.
+
+---
+
+## `models.py`
+
+```python
+from dataclasses import dataclass
+from typing import List, Optional
+
+
+@dataclass
+class ConfluencePageRef:
+    base_url: str
+    space_key: Optional[str]
+    page_id: Optional[str]
+    title: Optional[str]
+
+
+@dataclass
+class PageContent:
+    page_id: str
+    space_key: str
+    title: str
+    url: str
+    plain_text_chunks: List[str]
+    tables: List[List[List[str]]]
+```
+
+---
+
+## `url_parser.py` (PURE → easy unit tests)
+
+```python
+import re
+from urllib.parse import urlparse, unquote
+from .models import ConfluencePageRef
+
+
+SPACE_RE = re.compile(r"/spaces/(?P<space>[^/]+)/pages/(?P<id>\d+)")
+DISPLAY_RE = re.compile(r"/display/(?P<space>[^/]+)/(?P<title>[^/?#]+)")
+
+
+def parse_confluence_url(url: str) -> ConfluencePageRef:
+    if not isinstance(url, str):
+        raise ValueError("URL must be a string")
+
+    parsed = urlparse(url)
+    path = parsed.path
+
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
+
+    if m := SPACE_RE.search(path):
+        return ConfluencePageRef(
+            base_url=base_url,
+            space_key=m.group("space"),
+            page_id=m.group("id"),
+            title=None,
+        )
+
+    if m := DISPLAY_RE.search(path):
+        return ConfluencePageRef(
+            base_url=base_url,
+            space_key=m.group("space"),
+            page_id=None,
+            title=unquote(m.group("title").replace("+", " ")),
+        )
+
+    return ConfluencePageRef(base_url=base_url, space_key=None, page_id=None, title=None)
+```
+
+✅ **100% unit testable**
+
+---
+
+## `client.py`
+
+```python
+class ConfluenceClient:
+    def __init__(self, rest_client):
+        self.client = rest_client
+
+    def get(self, endpoint: str) -> dict:
+        resp = self.client.get(endpoint)
+        if isinstance(resp, dict) and "error" in resp:
+            raise RuntimeError(resp["error"])
+        return resp
+```
+
+---
+
+## `fetcher.py`
+
+```python
+from .models import ConfluencePageRef
+
+
+def build_content_endpoint(ref: ConfluencePageRef) -> str:
+    if ref.page_id:
+        return (
+            f"{ref.base_url}/rest/api/content/{ref.page_id}"
+            "?expand=body.storage,space,title"
+        )
+
+    if ref.space_key and ref.title:
+        return (
+            f"{ref.base_url}/rest/api/content"
+            f"?spaceKey={ref.space_key}&title={ref.title}"
+            "&expand=body.storage,space,title"
+        )
+
+    raise ValueError("Insufficient data to build endpoint")
+
+
+def normalize_response(resp: dict) -> dict:
+    if "results" in resp:
+        return resp["results"][0] if resp["results"] else {}
+    return resp
+```
+
+---
+
+## `parser.py` (HTML → structured data)
+
+```python
+from bs4 import BeautifulSoup
+from .models import PageContent
+
+
+def parse_page_html(page: dict, url: str) -> PageContent:
+    html = page.get("body", {}).get("storage", {}).get("value", "")
+    soup = BeautifulSoup(html, "html.parser")
+
+    tables = []
+    for table in soup.find_all("table"):
+        t = []
+        for row in table.find_all("tr"):
+            cells = [c.get_text(" ", strip=True) for c in row.find_all(["th", "td"])]
+            if cells:
+                t.append(cells)
+        if t:
+            tables.append(t)
+
+    text_chunks = [
+        tag.get_text(" ", strip=True)
+        for tag in soup.find_all(["p", "h1", "h2", "h3", "li"])
+        if tag.get_text(strip=True)
+    ]
+
+    return PageContent(
+        page_id=page.get("id", ""),
+        space_key=page.get("space", {}).get("key", ""),
+        title=page.get("title", ""),
+        url=url,
+        plain_text_chunks=text_chunks,
+        tables=tables,
+    )
+```
+
+---
+
+## `orchestrator.py` 🚀 (Agent Tool Entry Point)
+
+```python
+from .url_parser import parse_confluence_url
+from .fetcher import build_content_endpoint, normalize_response
+from .parser import parse_page_html
+from .client import ConfluenceClient
+
+
+def fetch_confluence_page_as_json(
+    confluence_url: str,
+    rest_client,
+) -> dict:
+    """
+    AGENT-FACING TOOL
+    """
+    ref = parse_confluence_url(confluence_url)
+
+    client = ConfluenceClient(rest_client)
+    endpoint = build_content_endpoint(ref)
+
+    raw = client.get(endpoint)
+    page = normalize_response(raw)
+
+    content = parse_page_html(page, confluence_url)
+    return content.__dict__
+```
+
+✅ **This is the function your AI agent calls**
+
+---
+
+## 4. Why this is now excellent
+
+### ✅ Maintainable
+
+* Each file has **one responsibility**
+* No duplication
+* Easy to extend (attachments, comments, etc.)
+
+### ✅ Unit-test friendly
+
+You can test:
+
+* `parse_confluence_url()` with zero mocks
+* `build_content_endpoint()` with pure inputs
+* `parse_page_html()` with fixture HTML
+* Mock `rest_client` for orchestration tests
+
+### ✅ Agent-ready
+
+This function:
+
+```python
+fetch_confluence_page_as_json(url, rest_client)
+```
+
+is:
+
+* deterministic
+* structured
+* JSON-safe
+* tool-call friendly
+
+---
+
+## Next (optional, but powerful)
+
+If you want, I can:
+
+* Add **pytest test cases**
+* Convert this into an **MCP tool**
+* Add **rate limiting + retries**
+* Add **async support**
+* Add **vector-db ready chunk metadata**
+
+Just tell me 👍
