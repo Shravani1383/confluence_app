@@ -1,15 +1,16 @@
 import asyncio
-import os
-
 from autogen_agentchat.agents import AssistantAgent
 from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
-from autogen_ext.tools.mcp import MCPToolAdapter
+from autogen_ext.tools.mcp import StdioServerParams, mcp_server_tools
+from autogen_core import CancellationToken
+from autogen_agentchat.ui import Console
 
 from config.env_setup import init_env_and_session, ensure_azure_openai_no_proxy
 from common import gpt_4o_config
+import os
 
 # --------------------------------------------------
-# Azure setup (matches your screenshot)
+# Azure setup
 # --------------------------------------------------
 
 init_env_and_session()
@@ -29,18 +30,20 @@ model_client = AzureOpenAIChatCompletionClient(
     api_version=gpt_4o_config.get("api_version"),
     azure_endpoint=gpt_4o_config.get("api_base"),
     api_key=api_key,
-    parallel_tool_calls=False,  # IMPORTANT for chaining
+    parallel_tool_calls=False,  # REQUIRED for chaining
 )
 
 # --------------------------------------------------
-# MCP tools (search + fetch)
+# MCP server params (LOCAL stdio server)
 # --------------------------------------------------
 
-confluence_tools = MCPToolAdapter(
-    name="confluence",
+confluence_server = StdioServerParams(
     command="python",
-    args=["mcp_server.py"],
+    args=["mcp_server.py"],  # path to your MCP server
 )
+
+# Load tools exposed by MCP server
+confluence_tools = asyncio.run(mcp_server_tools(confluence_server))
 
 # --------------------------------------------------
 # Agent
@@ -49,15 +52,15 @@ confluence_tools = MCPToolAdapter(
 agent = AssistantAgent(
     name="confluence_agent",
     model_client=model_client,
-    tools=[confluence_tools],
+    tools=confluence_tools,
     system_message="""
 You are an enterprise Confluence assistant.
 
-To answer questions:
-1. Search Confluence using keywords.
-2. Review search results.
-3. Fetch the most relevant pages using their URLs.
-4. Answer strictly based on fetched content.
+Rules:
+- Always search Confluence first.
+- Fetch relevant pages using their URLs.
+- Answer strictly from fetched content.
+- Never hallucinate.
 """,
 )
 
@@ -66,12 +69,12 @@ To answer questions:
 # --------------------------------------------------
 
 async def main():
-    result = await agent.run(
-        task="What features are included in the productivity suite?"
+    await Console(
+        agent.run_stream(
+            task="What features are included in the productivity suite?",
+            cancellation_token=CancellationToken(),
+        )
     )
-
-    print("\n=== ANSWER ===\n")
-    print(result.messages[-1].content)
 
 if __name__ == "__main__":
     asyncio.run(main())
