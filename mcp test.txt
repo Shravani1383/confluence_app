@@ -1,1 +1,184 @@
+import asyncio
+import aiohttp
+import ssl
+import csv
+import os
+import logging
+
+from backend.core.config import (
+    CONFLUENCE_BASE_URL,
+    DOMAIN_USER,
+    DOMAIN_PASSWORD,
+)
+
+# =====================
+# SSL / CERT CONFIG (same logic as your code)
+# =====================
+
+CERT_FILE = os.path.join(
+    os.path.dirname(__file__),
+    "cert",
+    "combined-g2.pem"
+)
+
+CERT_VERIFY = os.path.exists(CERT_FILE)
+
+ssl_context = ssl.create_default_context(cafile=CERT_FILE) if CERT_VERIFY else ssl._create_unverified_context()
+
+if not CERT_VERIFY:
+    logging.warning(
+        "Certificate file not found at %s. SSL verification will be disabled.",
+        CERT_FILE
+    )
+
+# =====================
+# TUNING
+# =====================
+
+MAX_CONCURRENCY = 6      # sweet spot for Confluence
+REQUEST_TIMEOUT = 30
+
+INPUT_FILE = "space_name.txt"
+OUTPUT_FILE = "space_page_counts.csv"
+CHECKPOINT_FILE = OUTPUT_FILE + ".ckpt"
+
+# =====================
+# LOGGING
+# =====================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+# =====================
+# HELPERS
+# =====================
+
+def read_space_keys(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip()]
+
+
+def read_checkpoint():
+    if os.path.exists(CHECKPOINT_FILE):
+        try:
+            with open(CHECKPOINT_FILE, "r") as f:
+                return int(f.read().strip())
+        except Exception:
+            return 0
+    return 0
+
+
+def write_checkpoint(idx):
+    tmp = CHECKPOINT_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(str(idx))
+    os.replace(tmp, CHECKPOINT_FILE)
+
+# =====================
+# CORE REQUEST LOGIC
+# =====================
+
+async def fetch_space_count(session, sem, space_key):
+    url = f"{CONFLUENCE_BASE_URL}/rest/api/content/search"
+    params = {
+        "cql": f"space={space_key}",
+        "limit": 0
+    }
+
+    async with sem:
+        while True:
+            async with session.get(url, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return space_key, data.get("total"), ""
+
+                if resp.status == 429:
+                    retry_after = int(resp.headers.get("Retry-After", 2))
+                    logging.warning(
+                        "Rate limited on %s, retrying after %ss",
+                        space_key,
+                        retry_after
+                    )
+                    await asyncio.sleep(retry_after)
+                    continue
+
+                text = await resp.text()
+                return space_key, None, f"HTTP {resp.status}: {text}"
+
+# =====================
+# MAIN RUNNER
+# =====================
+
+async def run(resume=False):
+    keys = read_space_keys(INPUT_FILE)
+    start_index = read_checkpoint() if resume else 0
+
+    auth = aiohttp.BasicAuth(DOMAIN_USER, DOMAIN_PASSWORD)
+    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+    sem = asyncio.Semaphore(MAX_CONCURRENCY)
+
+    csv_mode = "a" if resume and os.path.exists(OUTPUT_FILE) else "w"
+
+    connector = aiohttp.TCPConnector(ssl=ssl_context)
+
+    async with aiohttp.ClientSession(
+        auth=auth,
+        timeout=timeout,
+        connector=connector
+    ) as session, open(
+        OUTPUT_FILE, csv_mode, newline="", encoding="utf-8"
+    ) as csvfile:
+
+        writer = csv.DictWriter(
+            csvfile,
+            fieldnames=["space_key", "page_count", "error"]
+        )
+
+        if csv_mode == "w":
+            writer.writeheader()
+
+        tasks = []
+
+        for idx in range(start_index, len(keys)):
+            space_key = keys[idx]
+            tasks.append(fetch_space_count(session, sem, space_key))
+
+            if len(tasks) >= MAX_CONCURRENCY:
+                results = await asyncio.gather(*tasks)
+                for r in results:
+                    writer.writerow({
+                        "space_key": r[0],
+                        "page_count": r[1],
+                        "error": r[2]
+                    })
+                csvfile.flush()
+                write_checkpoint(idx + 1)
+                logging.info("Processed %s / %s", idx + 1, len(keys))
+                tasks.clear()
+
+        if tasks:
+            results = await asyncio.gather(*tasks)
+            for r in results:
+                writer.writerow({
+                    "space_key": r[0],
+                    "page_count": r[1],
+                    "error": r[2]
+                })
+            csvfile.flush()
+            write_checkpoint(len(keys))
+
+# =====================
+# ENTRYPOINT
+# =====================
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser("Fast Confluence space page counter")
+    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
+    args = parser.parse_args()
+
+    asyncio.run(run(resume=args.resume))
 
