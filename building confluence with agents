@@ -1,84 +1,82 @@
-Perfect — thanks for the patience. I can see clearly now what you want:
+YES 👍 — this is the **correct, modern Azure OpenAI path** for **AutoGen AgentChat** when you’re using:
 
-You want a **complete, MCP-free, production-grade agentic setup** using:
+* `autogen_agentchat`
+* `AzureOpenAIChatCompletionClient`
+* **Azure AD auth** (`DefaultAzureCredential`)
+* NOT API keys
+* NOT legacy `OpenAIChatCompletionClient`
 
-* ✅ **Azure OpenAI**
-* ✅ **AutoGen**
-* ✅ **Pydantic schemas (single source of truth)**
-* ✅ **Confluence tools (search + fetch)**
-* ✅ **Strict response validation + retry**
-* ✅ **Clean project structure**
-* ❌ **No MCP**
-* ❌ **No JSON-RPC / stdin/stdout**
+Below is the **FULL, corrected, end-to-end implementation**, rewritten to **exactly match** the Azure snippet you posted, while still giving you:
 
-Below is the **entire working skeleton** you can drop in and run.
+✅ Tools
+✅ Agents
+✅ Pydantic schemas
+✅ Strict validation
+✅ Retry / repair
+✅ Async
+✅ No MCP
 
 ---
 
-# 📁 Project Structure (Recommended)
+# ✅ FINAL, CANONICAL SETUP (Azure AD + AgentChat)
+
+## 📁 Project Structure
 
 ```
 confluence-agent/
 │
-├── agent/
-│   ├── agent.py
-│   ├── runner.py
-│
-├── tools/
-│   ├── confluence_fetch.py
-│   ├── confluence_search.py
+├── config/
+│   └── azure_client.py
 │
 ├── schemas/
-│   ├── agent_response.py
+│   └── agent_response.py
 │
-├── config/
-│   ├── azure_openai.py
-│   ├── env_setup.py
+├── tools/
+│   ├── confluence_search.py
+│   └── confluence_fetch.py
 │
 ├── validation/
-│   ├── response_guard.py
+│   └── response_guard.py
 │
-├── requirements.txt
+├── agents/
+│   └── confluence_agent.py
+│
 └── main.py
 ```
 
 ---
 
-# 1️⃣ Azure OpenAI Configuration
+## 1️⃣ Azure OpenAI Client (AAD Auth – CORRECT)
 
-### `config/azure_openai.py`
+### `config/azure_client.py`
 
 ```python
-import os
+from azure.identity import DefaultAzureCredential
+from autogen_ext.auth.azure import AzureTokenProvider
+from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
 
-AZURE_OPENAI_CONFIG = {
-    "model": os.environ["AZURE_OPENAI_DEPLOYMENT"],
-    "api_type": "azure",
-    "api_base": os.environ["AZURE_OPENAI_ENDPOINT"],
-    "api_key": os.environ["AZURE_OPENAI_API_KEY"],
-    "api_version": "2024-02-15-preview",
-}
+
+def create_azure_openai_client() -> AzureOpenAIChatCompletionClient:
+    token_provider = AzureTokenProvider(
+        DefaultAzureCredential(),
+        "https://cognitiveservices.azure.com/.default",
+    )
+
+    return AzureOpenAIChatCompletionClient(
+        azure_deployment="YOUR_DEPLOYMENT_NAME",
+        model="gpt-4o",  # or gpt-4.1, etc
+        api_version="2024-06-01",
+        azure_endpoint="https://YOUR-RESOURCE-NAME.openai.azure.com/",
+        azure_ad_token_provider=token_provider,
+    )
 ```
+
+> ✔ This EXACTLY matches the pattern you pasted
+> ✔ Works with Managed Identity, VS Code login, Service Principal, etc.
 
 ---
 
-### `config/env_setup.py`
-
-```python
-def init_env_and_session():
-    required = [
-        "AZURE_OPENAI_API_KEY",
-        "AZURE_OPENAI_ENDPOINT",
-        "AZURE_OPENAI_DEPLOYMENT",
-    ]
-    missing = [v for v in required if v not in __import__("os").environ]
-    if missing:
-        raise RuntimeError(f"Missing env vars: {missing}")
-```
-
----
-
-# 2️⃣ Pydantic Schemas (SOURCE OF TRUTH)
+## 2️⃣ Pydantic Schema (Single Source of Truth)
 
 ### `schemas/agent_response.py`
 
@@ -110,10 +108,24 @@ class AgentResponse(BaseModel):
 
 ---
 
-# 3️⃣ Confluence Tools
+## 3️⃣ Tools (Async, AgentChat-Compatible)
 
-> These wrap your **existing internal APIs**
-> (same logic you already had in MCP)
+### `tools/confluence_search.py`
+
+```python
+from tool_utils.confluence_search import confluence_search
+
+
+async def confluence_search_pages(
+    keywords: list[str],
+    max_results: int = 5,
+) -> dict:
+    try:
+        results = confluence_search(keywords=keywords, max_results=max_results)
+        return {"results": results}
+    except Exception as e:
+        return {"error": str(e)}
+```
 
 ---
 
@@ -123,45 +135,17 @@ class AgentResponse(BaseModel):
 from tool_utils.confluence_content_extractor import fetch_confluence_page
 
 
-def confluence_fetch_page(url: str) -> dict:
+async def confluence_fetch_page(url: str) -> dict:
     try:
         content = fetch_confluence_page(url)
-        return {
-            "url": url,
-            "content": content
-        }
+        return {"url": url, "content": content}
     except Exception as e:
-        return {
-            "error": str(e),
-            "url": url
-        }
+        return {"error": str(e), "url": url}
 ```
 
 ---
 
-### `tools/confluence_search.py`
-
-```python
-from tool_utils.confluence_search import confluence_search
-
-
-def confluence_search_pages(keywords: list[str], max_results: int = 5) -> dict:
-    try:
-        results = confluence_search(
-            keywords=keywords,
-            max_results=max_results
-        )
-        return {"results": results}
-    except Exception as e:
-        return {
-            "error": str(e),
-            "keywords": keywords
-        }
-```
-
----
-
-# 4️⃣ Agent Response Validation + Auto-Repair
+## 4️⃣ Validation Guard (Hard Fail + Retry)
 
 ### `validation/response_guard.py`
 
@@ -171,7 +155,7 @@ from pydantic import ValidationError
 from schemas.agent_response import AgentResponse
 
 
-def parse_and_validate(raw: str) -> AgentResponse:
+def validate_agent_response(raw: str) -> AgentResponse:
     try:
         data = json.loads(raw)
         return AgentResponse.model_validate(data)
@@ -181,21 +165,24 @@ def parse_and_validate(raw: str) -> AgentResponse:
 
 ---
 
-# 5️⃣ AutoGen Agent Setup (Azure OpenAI)
+## 5️⃣ Confluence Agent (AgentChat + Azure Client)
 
-### `agent/agent.py`
+### `agents/confluence_agent.py`
 
 ```python
-import autogen
-from config.azure_openai import AZURE_OPENAI_CONFIG
-from tools.confluence_fetch import confluence_fetch_page
+from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.tools import FunctionTool
+
 from tools.confluence_search import confluence_search_pages
+from tools.confluence_fetch import confluence_fetch_page
+from config.azure_client import create_azure_openai_client
+
 
 SYSTEM_MESSAGE = """
 You are a Confluence knowledge assistant.
 
-You MUST return your final response as VALID JSON
-that can be parsed into the following Pydantic model:
+You MUST return your FINAL response as VALID JSON
+that EXACTLY conforms to this Pydantic model:
 
 AgentResponse {
   status: "success" | "partial" | "error"
@@ -206,56 +193,64 @@ AgentResponse {
 }
 
 Rules:
-- JSON ONLY
+- Output JSON only
 - No markdown
-- No commentary outside JSON
-- Missing values must be empty lists or null
+- No explanations outside JSON
+- Use tools when needed
+- On failure, set status accordingly
 """
 
-assistant = autogen.AssistantAgent(
-    name="confluence_agent",
-    system_message=SYSTEM_MESSAGE,
-    llm_config=AZURE_OPENAI_CONFIG,
-)
 
-user_proxy = autogen.UserProxyAgent(
-    name="user_proxy",
-    human_input_mode="NEVER",
-    code_execution_config=False,
-)
+def create_confluence_agent() -> AssistantAgent:
+    model_client = create_azure_openai_client()
 
-user_proxy.register_function(
-    function_map={
-        "confluence_fetch_page": confluence_fetch_page,
-        "confluence_search_pages": confluence_search_pages,
-    }
-)
+    tools = [
+        FunctionTool(
+            confluence_search_pages,
+            name="confluence_search_pages",
+            description="Search Confluence pages by keywords",
+        ),
+        FunctionTool(
+            confluence_fetch_page,
+            name="confluence_fetch_page",
+            description="Fetch full Confluence page content by URL",
+        ),
+    ]
+
+    return AssistantAgent(
+        name="confluence_agent",
+        system_message=SYSTEM_MESSAGE,
+        model_client=model_client,
+        tools=tools,
+        model_client_stream=True,
+        max_tool_iterations=10,
+    )
 ```
 
 ---
 
-# 6️⃣ Guarded Execution (Retries + Repair)
+## 6️⃣ Execution + Auto-Repair Loop
 
-### `agent/runner.py`
+### `main.py`
 
 ```python
-from validation.response_guard import parse_and_validate
+import asyncio
+from agents.confluence_agent import create_confluence_agent
+from validation.response_guard import validate_agent_response
 
 
-def run_with_guard(user_proxy, agent, message, retries=2):
+async def run_with_guard(agent, task: str, retries: int = 2):
     last_error = None
 
     for _ in range(retries + 1):
-        chat = user_proxy.initiate_chat(
-            agent,
-            message=message,
-        )
+        result = await agent.run(task=task)
+        final_message = result.messages[-1].content
 
         try:
-            return parse_and_validate(chat.summary)
+            return validate_agent_response(final_message)
         except RuntimeError as e:
             last_error = str(e)
-            message = f"""
+            task = f"""
 Your previous response was INVALID.
 
 Error:
@@ -265,67 +260,57 @@ Fix your response so it EXACTLY matches the schema.
 """
 
     raise RuntimeError(last_error)
-```
 
----
 
-# 7️⃣ Entry Point
+async def main():
+    agent = create_confluence_agent()
 
-### `main.py`
-
-```python
-from config.env_setup import init_env_and_session
-from agent.agent import assistant, user_proxy
-from agent.runner import run_with_guard
-
-init_env_and_session()
-
-if __name__ == "__main__":
-    response = run_with_guard(
-        user_proxy,
-        assistant,
-        message=(
-            "Search Confluence for 'MCP architecture' and "
-            "summarize the most relevant page."
-        )
+    response = await run_with_guard(
+        agent,
+        task="Search Confluence for MCP architecture and summarize the most relevant page."
     )
 
     print(response.model_dump_json(indent=2))
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ---
 
-# 8️⃣ requirements.txt
+## 7️⃣ requirements.txt
 
 ```txt
-pyautogen
+autogen-agentchat
+autogen-ext
 pydantic>=2.6
+azure-identity
 openai
 ```
 
 ---
 
-# ✅ What You Now Have
+# ✅ What This Solves (Explicitly)
 
-* ✔ Azure OpenAI wired correctly
-* ✔ AutoGen agentic reasoning
-* ✔ Tool invocation
-* ✔ Strict Pydantic validation
-* ✔ Automatic repair loop
-* ✔ No MCP
-* ✔ No JSON-RPC
-* ✔ Clean, extensible architecture
+✔ Uses **AzureOpenAIChatCompletionClient**
+✔ Uses **AzureTokenProvider + DefaultAzureCredential**
+✔ Works with **Managed Identity / Entra ID**
+✔ Uses **new AgentChat API**
+✔ Tool-based agentic flow
+✔ Strict Pydantic validation
+✔ Retry & self-healing
+✔ No MCP
+✔ No legacy AutoGen
 
 ---
 
-## Want next?
+## 🔥 Strong Recommendation (Next Step)
 
-I can:
+If this is production-bound, the **next 3 upgrades** I’d strongly suggest:
 
-* Add **planner/executor agents**
-* Add **streaming structured output**
-* Convert to **FastAPI**
-* Add **RAG ingestion**
-* Add **LangGraph compatibility**
+1. **Planner → Executor agent split**
+2. **Structured tool outputs using Pydantic**
+3. **Streaming partial JSON validation**
 
-Just tell me the next step 👇
+If you want, I’ll wire **all three** cleanly on top of this exact codebase.
