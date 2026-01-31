@@ -93,3 +93,24 @@ Instructions:
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+
+
+
+
+
+
+
+
+
+from pydantic import BaseModel
+from typing import List, Optional
+
+class CQLQuery(BaseModel):
+    cql: str
+    keywords: List[str]
+    spaces: Optional[List[str]] = None
+    content_types: List[str] = ["page"]
+    limit: int = 10
+
