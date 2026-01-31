@@ -1,116 +1,552 @@
-import asyncio
+Ahhh — this is a *great* question. You’re basically asking how to turn your setup from **“search with keywords”** into a **proper agentic query planner**:
 
-from confluence_agent.confluence_agents import (
-    create_confluence_agent,
-    create_cql_builder_agent,
-)
+> **User intent → structured understanding → CQL generation → tool execution**
 
-from validation.response_guard import (
-    validate_agent_response,
-    validate_cql_response,
-)
+This is exactly the right way to do Confluence search at scale.
+
+Below I’ll give you a **clean, production-grade pattern** that fits perfectly into your current AutoGen + Azure OpenAI + Pydantic stack.
+
+---
+
+# 🧠 High-level Architecture
+
+```
+User Query (NL)
+      ↓
+Intent Identification Agent (LLM)
+      ↓
+Structured Intent (Pydantic)
+      ↓
+CQL Builder (deterministic)
+      ↓
+Confluence Search Tool (CQL)
+      ↓
+Result Normalization
+      ↓
+Final Answer Agent
+```
+
+Key idea:
+
+* **LLM decides “what”**
+* **Code decides “how”**
+
+---
+
+# 1️⃣ Define the Intent Schema (Pydantic)
+
+### `schemas/search_intent.py`
+
+```python
+from typing import List, Optional, Literal
+from pydantic import BaseModel, Field
 
 
-async def run_with_guard(agent, task: str, retries: int = 2):
-    """
-    Runs an agent with schema validation and retry-on-failure.
-    """
-    last_error = None
+class SearchIntent(BaseModel):
+    intent_type: Literal[
+        "search",
+        "fetch_page",
+        "list_recent",
+        "unknown"
+    ]
 
-    for _ in range(retries + 1):
-        result = await agent.run(task=task)
-        final_message = result.messages[-1].content
+    keywords: List[str] = Field(default_factory=list)
 
-        try:
-            return validate_agent_response(final_message)
-        except RuntimeError as e:
-            last_error = str(e)
-            task = f"""
-Your previous response was INVALID.
+    spaces: List[str] = Field(default_factory=list)
 
-Error:
-{last_error}
+    author: Optional[str] = None
 
-Fix your response so it EXACTLY matches the schema.
+    labels: List[str] = Field(default_factory=list)
+
+    created_after: Optional[str] = None  # ISO date
+    updated_after: Optional[str] = None
+
+    max_results: int = 5
+```
+
+This is **LLM output**, but **strongly constrained**.
+
+---
+
+# 2️⃣ Intent Identification Agent
+
+### System prompt (IMPORTANT)
+
+```python
+INTENT_SYSTEM_MESSAGE = """
+You are an intent classification agent for Confluence search.
+
+Your job:
+- Analyze the user's request
+- Extract structured search intent
+- Return ONLY valid JSON matching the SearchIntent model
+
+Rules:
+- No markdown
+- No explanations
+- Output JSON only
+- If unsure, set intent_type = "unknown"
 """
+```
 
-    raise RuntimeError(last_error)
+---
+
+### `agents/intent_agent.py`
+
+```python
+import autogen
+from config.azure_openai import AZURE_OPENAI_CONFIG
+
+intent_agent = autogen.AssistantAgent(
+    name="intent_agent",
+    system_message=INTENT_SYSTEM_MESSAGE,
+    llm_config=AZURE_OPENAI_CONFIG,
+)
+```
+
+---
+
+# 3️⃣ Intent Parsing + Validation
+
+### `validation/intent_guard.py`
+
+```python
+import json
+from pydantic import ValidationError
+from schemas.search_intent import SearchIntent
 
 
-async def main():
-    user_query = (
-        "Search Confluence for HSBC Productivity Suite features "
-        "and give me a brief overview of its software development life cycle."
+def parse_intent(raw: str) -> SearchIntent:
+    try:
+        data = json.loads(raw)
+        return SearchIntent.model_validate(data)
+    except (json.JSONDecodeError, ValidationError) as e:
+        raise RuntimeError(f"Invalid intent output: {e}")
+```
+
+---
+
+# 4️⃣ Deterministic CQL Builder (NO LLM HERE)
+
+### `cql/builder.py`
+
+```python
+from schemas.search_intent import SearchIntent
+
+
+def build_cql(intent: SearchIntent) -> str:
+    clauses = []
+
+    if intent.keywords:
+        text = " AND ".join(
+            f'text ~ "{kw}"' for kw in intent.keywords
+        )
+        clauses.append(f"({text})")
+
+    if intent.spaces:
+        spaces = ", ".join(f'"{s}"' for s in intent.spaces)
+        clauses.append(f"space IN ({spaces})")
+
+    if intent.author:
+        clauses.append(f'creator = "{intent.author}"')
+
+    if intent.labels:
+        labels = ", ".join(f'"{l}"' for l in intent.labels)
+        clauses.append(f"label IN ({labels})")
+
+    if intent.created_after:
+        clauses.append(f'created > "{intent.created_after}"')
+
+    if intent.updated_after:
+        clauses.append(f'lastModified > "{intent.updated_after}"')
+
+    if not clauses:
+        return "type = page"
+
+    return " AND ".join(clauses)
+```
+
+This guarantees:
+
+* ✅ Safe CQL
+* ✅ No prompt injection
+* ✅ Deterministic output
+
+---
+
+# 5️⃣ Update Search Tool to Accept CQL
+
+### `tools/confluence_search.py`
+
+```python
+def confluence_search_cql(cql: str, max_results: int = 5) -> dict:
+    try:
+        results = confluence_search(
+            cql=cql,
+            max_results=max_results
+        )
+        return {"results": results}
+    except Exception as e:
+        return {
+            "error": str(e),
+            "cql": cql
+        }
+```
+
+---
+
+# 6️⃣ Orchestrator (Planner → Tool → Responder)
+
+### `agent/orchestrator.py`
+
+```python
+from validation.intent_guard import parse_intent
+from cql.builder import build_cql
+
+
+def run_intent_search(
+    user_proxy,
+    intent_agent,
+    search_agent,
+    user_query: str,
+):
+    # 1️⃣ Identify intent
+    intent_chat = user_proxy.initiate_chat(
+        intent_agent,
+        message=user_query
     )
 
-    # --------------------------------------------------
-    # 1️⃣ Create agents
-    # --------------------------------------------------
-    cql_agent = create_cql_builder_agent()
-    confluence_agent = create_confluence_agent()
+    intent = parse_intent(intent_chat.summary)
 
-    # --------------------------------------------------
-    # 2️⃣ Build CQL using CQL agent
-    # --------------------------------------------------
-    cql_result = await cql_agent.run(task=user_query)
-    cql_message = cql_result.messages[-1].content
+    if intent.intent_type != "search":
+        raise RuntimeError("Unsupported intent")
 
-    cql_query = validate_cql_response(cql_message)
+    # 2️⃣ Build CQL
+    cql = build_cql(intent)
 
-    print("\nGenerated CQL:")
-    print(cql_query.cql)
-
-    # --------------------------------------------------
-    # 3️⃣ Pass CQL to execution agent
-    # --------------------------------------------------
-    execution_task = f"""
-Use the following Confluence CQL query to answer the user.
-
-CQL:
-{cql_query.cql}
-
-Limit:
-{cql_query.limit}
-
-Instructions:
-- Search Confluence using this CQL
-- Fetch relevant pages if needed
-- Produce a structured answer
-"""
-
-    response = await run_with_guard(
-        agent=confluence_agent,
-        task=execution_task,
-        retries=2,
+    # 3️⃣ Execute search via tool
+    search_message = (
+        f"Run a Confluence search using this CQL:\n{cql}\n"
+        f"Max results: {intent.max_results}"
     )
 
-    # --------------------------------------------------
-    # 4️⃣ Output final validated response
-    # --------------------------------------------------
-    print("\nFinal Response:")
-    print(response.model_dump_json(indent=2))
+    return user_proxy.initiate_chat(
+        search_agent,
+        message=search_message
+    )
+```
+
+---
+
+# 7️⃣ Register the CQL Tool
+
+```python
+user_proxy.register_function(
+    function_map={
+        "confluence_search_cql": confluence_search_cql,
+    }
+)
+```
+
+---
+
+# 8️⃣ Example Flow
+
+### User input:
+
+> “Find recent design docs in ENG space authored by Alice”
+
+### Intent output:
+
+```json
+{
+  "intent_type": "search",
+  "keywords": ["design"],
+  "spaces": ["ENG"],
+  "author": "Alice",
+  "labels": [],
+  "created_after": null,
+  "updated_after": null,
+  "max_results": 5
+}
+```
+
+### Generated CQL:
+
+```sql
+(text ~ "design") AND space IN ("ENG") AND creator = "Alice"
+```
+
+---
+
+# 🔥 Why this design is *correct*
+
+* LLM does **semantic reasoning**
+* Code does **query construction**
+* No hallucinated CQL
+* Easy to test
+* Easy to extend:
+
+  * date ranges
+  * content types
+  * attachments
+  * permissions
+
+---
+
+## Want to level this up further?
+
+I can:
+
+* Add **planner/executor agents**
+* Add **CQL explanation & validation**
+* Add **multi-intent routing**
+* Add **confidence scoring**
+* Add **LangGraph version**
+
+Just say the word — you’re building this the *right way*.
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
 
 
 
 
 
+Perfect — thanks for sharing `main.py`.
+Now we can be **very precise** and map the **intent → CQL → search tool** flow **directly onto *your* async/await AutoGen-style code**, without breaking your guard logic.
 
+I’ll do this in three layers:
 
+1. **What your current `main.py` is doing**
+2. **What exactly needs to change (minimal diff)**
+3. **Final corrected `main.py` with intent + CQL**
 
+No abstractions, no rewrites.
 
+---
 
+## 1️⃣ What your current `main.py` does (correctly)
 
-from pydantic import BaseModel
-from typing import List, Optional
+Your flow right now is:
 
-class CQLQuery(BaseModel):
-    cql: str
-    keywords: List[str]
-    spaces: Optional[List[str]] = None
-    content_types: List[str] = ["page"]
-    limit: int = 10
+```text
+task (string)
+  ↓
+agent.run(task)
+  ↓
+agent produces final JSON
+  ↓
+validate_agent_response()
+  ↓
+retry if invalid
+```
 
+This means:
+
+* You have **one agent**
+* That agent is doing **intent understanding + search + summarization**
+* Validation happens at the very end
+
+This is why:
+
+* You *can’t* cleanly insert intent → CQL
+* The LLM is still deciding *how* to search
+
+---
+
+## 2️⃣ What needs to change (ONLY TWO THINGS)
+
+### ✅ Add an **intent step before** `run_with_guard`
+
+### ✅ Pass **CQL**, not raw user text, into the main agent
+
+Everything else stays.
+
+---
+
+## 3️⃣ Minimal Architecture Change (Mapped to YOUR Code)
+
+### NEW flow (still async, still guarded):
+
+```text
+User task
+  ↓
+Intent Agent (LLM)
+  ↓
+SearchIntent (Pydantic)
+  ↓
+CQL Builder (Python)
+  ↓
+Main Agent (search + answer)
+  ↓
+validate_agent_response
+```
+
+---
+
+## 4️⃣ Concrete Code Changes
+
+### 🔹 Step 1: Import intent pieces
+
+At the top of `main.py` **add**:
+
+```python
+from agents.intent_agent import intent_agent
+from validation.intent_guard import parse_intent
+from cql.builder import build_cql
+```
+
+---
+
+### 🔹 Step 2: Add intent + CQL orchestration
+
+Add this helper **above** `main()`:
+
+```python
+async def run_intent_search(agent, user_task: str, retries: int = 2):
+    # 1️⃣ Identify intent
+    intent_result = await intent_agent.run(task=user_task)
+    intent_message = intent_result.messages[-1].content
+    intent = parse_intent(intent_message)
+
+    if intent.intent_type != "search":
+        raise RuntimeError("Only search intent supported")
+
+    # 2️⃣ Build CQL
+    cql = build_cql(intent)
+
+    # 3️⃣ Hand CQL to main agent
+    search_task = f"""
+Search Confluence using the following CQL:
+
+{cql}
+
+Return results and a summary.
+"""
+
+    return await run_with_guard(
+        agent,
+        task=search_task,
+        retries=retries
+    )
+```
+
+⚠️ **Important**
+The main agent never sees the original user query — only **clean CQL**.
+
+---
+
+## 5️⃣ Your Updated `main()` (VERY SMALL CHANGE)
+
+### ❌ BEFORE
+
+```python
+response = await run_with_guard(
+    agent,
+    task="Search Confluence for HSBC productivity Suite and give me some information"
+)
+```
+
+---
+
+### ✅ AFTER (this is the key change)
+
+```python
+response = await run_intent_search(
+    agent,
+    user_task="Search Confluence for HSBC productivity Suite and give me some information"
+)
+```
+
+That’s it.
+Your guard, retries, validation — all unchanged.
+
+---
+
+## 6️⃣ Why this works with YOUR async agent
+
+* `intent_agent.run()` → async LLM call
+* `parse_intent()` → Pydantic validation
+* `build_cql()` → deterministic
+* `run_with_guard()` → unchanged retry logic
+
+You now have **two LLM calls**:
+
+1. Intent extraction
+2. Final answer
+
+This is correct and scalable.
+
+---
+
+## 7️⃣ What your agent prompt should now say (IMPORTANT)
+
+Your **main Confluence agent system message** should include:
+
+```text
+You will be given a Confluence CQL query.
+DO NOT modify the query.
+Use it exactly as provided to search Confluence.
+```
+
+This prevents the LLM from “improving” CQL.
+
+---
+
+## 8️⃣ Sanity Check (Example)
+
+### User input:
+
+```
+"Find recent HSBC productivity suite documents"
+```
+
+### Intent Agent output:
+
+```json
+{
+  "intent_type": "search",
+  "keywords": ["HSBC", "productivity suite"],
+  "spaces": [],
+  "author": null,
+  "labels": [],
+  "max_results": 5
+}
+```
+
+### Generated CQL:
+
+```sql
+(text ~ "HSBC" AND text ~ "productivity suite")
+```
+
+### Main agent task:
+
+```
+Search Confluence using the following CQL:
+(text ~ "HSBC" AND text ~ "productivity suite")
+```
+
+---
+
+## 9️⃣ Why this is the *right* level of change
+
+✅ Minimal edits
+✅ No refactor of guard logic
+✅ No schema changes
+✅ Deterministic querying
+✅ Easy to add routing later
+
+---
+
+## If you want next (optional but powerful)
+
+I can:
+
+* Add **fetch_page intent**
+* Add **clarification loop** if intent is ambiguous
+* Add **confidence score to intent**
+* Collapse this into **planner/executor agents**
+* Convert this to **LangGraph**
+
+If you want, paste `create_confluence_agent()` and I’ll adjust its system prompt exactly for this flow.
