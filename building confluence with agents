@@ -1,316 +1,252 @@
-YES 👍 — this is the **correct, modern Azure OpenAI path** for **AutoGen AgentChat** when you’re using:
+Yes — absolutely 👍
+And the good news is: **you do NOT need to rewrite your existing code**.
+We can **merge the CQL-builder agent cleanly on top of what you already have**, with *small, safe, incremental changes*.
 
-* `autogen_agentchat`
-* `AzureOpenAIChatCompletionClient`
-* **Azure AD auth** (`DefaultAzureCredential`)
-* NOT API keys
-* NOT legacy `OpenAIChatCompletionClient`
-
-Below is the **FULL, corrected, end-to-end implementation**, rewritten to **exactly match** the Azure snippet you posted, while still giving you:
-
-✅ Tools
-✅ Agents
-✅ Pydantic schemas
-✅ Strict validation
-✅ Retry / repair
-✅ Async
-✅ No MCP
+Below I’ll show you **exactly where to add what**, step by step, using **your current structure and patterns**.
 
 ---
 
-# ✅ FINAL, CANONICAL SETUP (Azure AD + AgentChat)
+## 🔧 What we will add (minimal, clean merge)
 
-## 📁 Project Structure
+We will add **three small things**:
 
-```
-confluence-agent/
-│
-├── config/
-│   └── azure_client.py
-│
-├── schemas/
-│   └── agent_response.py
-│
-├── tools/
-│   ├── confluence_search.py
-│   └── confluence_fetch.py
-│
-├── validation/
-│   └── response_guard.py
-│
-├── agents/
-│   └── confluence_agent.py
-│
-└── main.py
-```
+1. ✅ A **new schema** (`CQLQuery`)
+2. ✅ A **new agent factory** (`create_cql_builder_agent`)
+3. ✅ A **new tool entrypoint** that accepts **raw CQL**
+4. ✅ A **thin orchestrator** that connects both agents
+
+Your existing:
+
+* `confluence_agents.py`
+* `response_guard.py`
+* `confluence_search.py`
+
+👉 **remain intact**
 
 ---
 
-## 1️⃣ Azure OpenAI Client (AAD Auth – CORRECT)
+## 1️⃣ Add a new schema (drop-in)
 
-### `config/azure_client.py`
+📁 **`schemas/cql_query.py`** (new file)
 
 ```python
-from azure.identity import DefaultAzureCredential
-from autogen_ext.auth.azure import AzureTokenProvider
-from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
+from pydantic import BaseModel
+from typing import List, Optional
 
-
-def create_azure_openai_client() -> AzureOpenAIChatCompletionClient:
-    token_provider = AzureTokenProvider(
-        DefaultAzureCredential(),
-        "https://cognitiveservices.azure.com/.default",
-    )
-
-    return AzureOpenAIChatCompletionClient(
-        azure_deployment="YOUR_DEPLOYMENT_NAME",
-        model="gpt-4o",  # or gpt-4.1, etc
-        api_version="2024-06-01",
-        azure_endpoint="https://YOUR-RESOURCE-NAME.openai.azure.com/",
-        azure_ad_token_provider=token_provider,
-    )
+class CQLQuery(BaseModel):
+    cql: str
+    keywords: List[str]
+    spaces: Optional[List[str]] = None
+    content_types: List[str] = ["page"]
+    limit: int = 10
 ```
 
-> ✔ This EXACTLY matches the pattern you pasted
-> ✔ Works with Managed Identity, VS Code login, Service Principal, etc.
+No impact on existing schemas.
 
 ---
 
-## 2️⃣ Pydantic Schema (Single Source of Truth)
+## 2️⃣ Add CQL Builder Agent (merge into `confluence_agents.py`)
 
-### `schemas/agent_response.py`
+📁 **`confluence_agent/confluence_agents.py`**
 
-```python
-from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, HttpUrl
-
-
-class Source(BaseModel):
-    title: str
-    url: HttpUrl
-    page_id: Optional[str] = None
-    space: Optional[str] = None
-
-
-class Artifacts(BaseModel):
-    summary: Optional[str] = None
-    key_points: List[str] = Field(default_factory=list)
-    extracted_entities: List[str] = Field(default_factory=list)
-
-
-class AgentResponse(BaseModel):
-    status: Literal["success", "partial", "error"]
-    answer: str
-    sources: List[Source] = Field(default_factory=list)
-    artifacts: Optional[Artifacts] = None
-    errors: List[str] = Field(default_factory=list)
-```
-
----
-
-## 3️⃣ Tools (Async, AgentChat-Compatible)
-
-### `tools/confluence_search.py`
+Add this **below** your existing `create_confluence_agent()`.
 
 ```python
-from tool_utils.confluence_search import confluence_search
-
-
-async def confluence_search_pages(
-    keywords: list[str],
-    max_results: int = 5,
-) -> dict:
-    try:
-        results = confluence_search(keywords=keywords, max_results=max_results)
-        return {"results": results}
-    except Exception as e:
-        return {"error": str(e)}
-```
-
----
-
-### `tools/confluence_fetch.py`
-
-```python
-from tool_utils.confluence_content_extractor import fetch_confluence_page
-
-
-async def confluence_fetch_page(url: str) -> dict:
-    try:
-        content = fetch_confluence_page(url)
-        return {"url": url, "content": content}
-    except Exception as e:
-        return {"error": str(e), "url": url}
-```
-
----
-
-## 4️⃣ Validation Guard (Hard Fail + Retry)
-
-### `validation/response_guard.py`
-
-```python
+from schemas.cql_query import CQLQuery
 import json
-from pydantic import ValidationError
-from schemas.agent_response import AgentResponse
 
+CQL_SYSTEM_MESSAGE = """
+You are a Confluence CQL query builder.
 
-def validate_agent_response(raw: str) -> AgentResponse:
-    try:
-        data = json.loads(raw)
-        return AgentResponse.model_validate(data)
-    except (json.JSONDecodeError, ValidationError) as e:
-        raise RuntimeError(f"Schema validation failed: {e}")
-```
-
----
-
-## 5️⃣ Confluence Agent (AgentChat + Azure Client)
-
-### `agents/confluence_agent.py`
-
-```python
-from autogen_agentchat.agents import AssistantAgent
-from autogen_agentchat.tools import FunctionTool
-
-from tools.confluence_search import confluence_search_pages
-from tools.confluence_fetch import confluence_fetch_page
-from config.azure_client import create_azure_openai_client
-
-
-SYSTEM_MESSAGE = """
-You are a Confluence knowledge assistant.
-
-You MUST return your FINAL response as VALID JSON
-that EXACTLY conforms to this Pydantic model:
-
-AgentResponse {
-  status: "success" | "partial" | "error"
-  answer: string
-  sources: list
-  artifacts: object | null
-  errors: list
-}
+Your task:
+- Analyze the user's intent
+- Extract important keywords
+- Construct the BEST possible Confluence CQL query
 
 Rules:
-- Output JSON only
-- No markdown
-- No explanations outside JSON
-- Use tools when needed
-- On failure, set status accordingly
+- Output ONLY valid JSON
+- Do NOT execute searches
+- Do NOT explain anything
+- Prefer text ~ for fuzzy matching
+- Use AND between required concepts
+- Keep queries precise, not overly broad
+
+Output must EXACTLY match this schema:
+
+{
+  "cql": string,
+  "keywords": string[],
+  "spaces": string[] | null,
+  "content_types": string[],
+  "limit": number
+}
 """
-
-
-def create_confluence_agent() -> AssistantAgent:
-    model_client = create_azure_openai_client()
-
-    tools = [
-        FunctionTool(
-            confluence_search_pages,
-            name="confluence_search_pages",
-            description="Search Confluence pages by keywords",
-        ),
-        FunctionTool(
-            confluence_fetch_page,
-            name="confluence_fetch_page",
-            description="Fetch full Confluence page content by URL",
-        ),
-    ]
-
-    return AssistantAgent(
-        name="confluence_agent",
-        system_message=SYSTEM_MESSAGE,
-        model_client=model_client,
-        tools=tools,
-        model_client_stream=True,
-        max_tool_iterations=10,
-    )
 ```
 
----
-
-## 6️⃣ Execution + Auto-Repair Loop
-
-### `main.py`
+Now add the factory:
 
 ```python
-import asyncio
-from agents.confluence_agent import create_confluence_agent
-from validation.response_guard import validate_agent_response
+def create_cql_builder_agent() -> AssistantAgent:
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY") or gpt_4o_config.get("api_key")
+    if not api_key:
+        raise RuntimeError("Azure OpenAI API key not found")
 
-
-async def run_with_guard(agent, task: str, retries: int = 2):
-    last_error = None
-
-    for _ in range(retries + 1):
-        result = await agent.run(task=task)
-        final_message = result.messages[-1].content
-
-        try:
-            return validate_agent_response(final_message)
-        except RuntimeError as e:
-            last_error = str(e)
-            task = f"""
-Your previous response was INVALID.
-
-Error:
-{last_error}
-
-Fix your response so it EXACTLY matches the schema.
-"""
-
-    raise RuntimeError(last_error)
-
-
-async def main():
-    agent = create_confluence_agent()
-
-    response = await run_with_guard(
-        agent,
-        task="Search Confluence for MCP architecture and summarize the most relevant page."
+    model_client = AzureOpenAIChatCompletionClient(
+        azure_deployment=gpt_4o_config.get("deployment"),
+        model=gpt_4o_config.get("model"),
+        api_version=gpt_4o_config.get("api_version"),
+        azure_endpoint=gpt_4o_config.get("api_base"),
+        api_key=api_key,
+        parallel_tool_calls=False,
     )
 
-    print(response.model_dump_json(indent=2))
+    return AssistantAgent(
+        name="cql_builder_agent",
+        system_message=CQL_SYSTEM_MESSAGE,
+        model_client=model_client,
+        tools=[],              # 🔴 NO TOOLS
+        model_client_stream=False,
+        max_tool_iterations=0,
+    )
+```
 
+✔ Reuses your Azure config
+✔ Matches your agent style
+✔ Zero impact on existing agent
 
-if __name__ == "__main__":
-    asyncio.run(main())
+---
+
+## 3️⃣ Add CQL validation (reuse your guard style)
+
+📁 **`validation/response_guard.py`**
+
+Add this **below your existing validators**:
+
+```python
+from schemas.cql_query import CQLQuery
+
+def validate_cql_response(raw: str) -> CQLQuery:
+    try:
+        cleaned = _extract_json_text(raw)
+        data = json.loads(cleaned)
+        return CQLQuery.model_validate(data)
+    except Exception as e:
+        raise RuntimeError(f"CQL schema validation failed: {e}")
+```
+
+This plugs straight into your retry mechanism if you want it.
+
+---
+
+## 4️⃣ Extend your existing search tool (no breaking changes)
+
+📁 **`tool_utils/confluence_search.py`**
+
+Add **ONE new function** at the bottom:
+
+```python
+def search_confluence_by_cql(cql: str, limit: int = 10) -> List[PageSearchResult]:
+    endpoint = f"{CONFLUENCE_BASE_URL}/rest/api/content/search"
+    params = {
+        "cql": cql,
+        "limit": limit,
+        "expand": "space"
+    }
+
+    req = PreparedRequest()
+    req.prepare_url(endpoint, params)
+
+    client = create_rest_client()
+
+    try:
+        resp = client.get(req.url)
+    except Exception:
+        return []
+
+    if not isinstance(resp, dict):
+        return []
+
+    results = []
+    for page in resp.get("results", []):
+        title = page.get("title", "")
+        space_key = page.get("space", {}).get("key", "")
+        page_id = page.get("id")
+
+        url = ""
+        if title and space_key:
+            url = f"{CONFLUENCE_BASE_URL}/display/{space_key}/{quote_plus(title)}"
+
+        results.append(PageSearchResult(title, space_key, url, page_id))
+
+    return results
+```
+
+✅ No existing code touched
+✅ Your original `search_confluence_pages()` still works
+✅ New function supports agent-generated CQL
+
+---
+
+## 5️⃣ Orchestrator (small, clean, optional file)
+
+📁 **`main.py` (or new `pipeline.py`)**
+
+```python
+from confluence_agent.confluence_agents import (
+    create_confluence_agent,
+    create_cql_builder_agent,
+)
+from validation.response_guard import (
+    validate_agent_response,
+    validate_cql_response,
+)
+
+async def run_confluence_with_cql(user_query: str):
+    cql_agent = create_cql_builder_agent()
+    exec_agent = create_confluence_agent()
+
+    # 1️⃣ Build CQL
+    cql_result = await cql_agent.run(task=user_query)
+    cql_query = validate_cql_response(cql_result.messages[-1].content)
+
+    # 2️⃣ Execute using existing agent
+    task = f"""
+    Use the following CQL query to search Confluence and answer the user.
+
+    CQL: {cql_query.cql}
+    Limit: {cql_query.limit}
+    """
+
+    result = await exec_agent.run(task=task)
+    return validate_agent_response(result.messages[-1].content)
 ```
 
 ---
 
-## 7️⃣ requirements.txt
+## 🧠 Why this merge is safe
 
-```txt
-autogen-agentchat
-autogen-ext
-pydantic>=2.6
-azure-identity
-openai
-```
+✔ No refactors
+✔ No breaking API changes
+✔ Uses your validation philosophy
+✔ Clear agent responsibility boundaries
+✔ Easy to debug (inspect CQL separately)
 
 ---
 
-# ✅ What This Solves (Explicitly)
+## 🔥 What you now have
 
-✔ Uses **AzureOpenAIChatCompletionClient**
-✔ Uses **AzureTokenProvider + DefaultAzureCredential**
-✔ Works with **Managed Identity / Entra ID**
-✔ Uses **new AgentChat API**
-✔ Tool-based agentic flow
-✔ Strict Pydantic validation
-✔ Retry & self-healing
-✔ No MCP
-✔ No legacy AutoGen
+* **Agent 1** → understands *intent → CQL*
+* **Agent 2** → executes *CQL → knowledge*
+* Strong schema enforcement
+* Enterprise-grade traceability
 
 ---
 
-## 🔥 Strong Recommendation (Next Step)
+If you want, next I can:
 
-If this is production-bound, the **next 3 upgrades** I’d strongly suggest:
+* Add **retry-with-feedback** for bad CQL
+* Teach the CQL agent about **labels, spaces, recency**
+* Add **unit tests** for CQL quality
+* Help you convert this into an MCP server
 
-1. **Planner → Executor agent split**
-2. **Structured tool outputs using Pydantic**
-3. **Streaming partial JSON validation**
-
-If you want, I’ll wire **all three** cleanly on top of this exact codebase.
+Just tell me 👌
