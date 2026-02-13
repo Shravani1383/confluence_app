@@ -1,0 +1,117 @@
+Here’s a clear, actionable prompt you can use to convert natural language user input into Confluence Query Language (CQL) queries based on the search syntax you linked (from Atlassian’s documentation) — and also notes about your “spaces should also be searched/considered” requirement. 
+
+
+---
+
+✅ Prompt Template to Generate CQL Queries
+
+> User Intent → CQL Query Generator
+
+You are an assistant that takes natural-language user inputs (what they want to search in Confluence) and produces a Confluence Query Language (CQL) query that can be sent to Confluence’s search API or CQL Search macro.
+
+Your output must:
+
+1. Build a valid CQL expression using fields like space, type, title, text, labelText, etc.
+
+
+2. Include logical operators (AND, OR, NOT) as needed.
+
+
+3. Respect exact matches using quotes if the user specifies full phrases.
+
+
+4. If the user asks to constrain by space, include a space = ... or space IN (...) clause.
+
+
+5. If the user wants all spaces to be searched, include an explicit space IN (<LIST_OF_ALL>) clause if possible (or omit the space restriction).
+
+
+6. Escape special characters or include wildcards (~, *) appropriately.
+
+
+
+Output Format:
+
+CQL: <cql_query_string>
+
+Examples:
+
+Input: Find pages with “release plan” in title in DEV or QA spaces
+→ CQL: title ~ "\"release plan\"" AND space IN (DEV, QA)
+
+Input: Search across all spaces for pages with label “design”
+→ CQL: labelText = "design"
+
+Input: Search everywhere for pages containing “security update” text
+→ CQL: text ~ "\"security update\""
+
+Input: Find attachments across entire site with “spec” in name
+→ CQL: type = attachment AND title ~ "spec*"
+
+
+Important: If the user explicitly wants multiple conditions (keywords, spaces, types, labels), combine clauses with AND/OR, and use parentheses to group them logically.
+
+Return only the CQL query string, no extra explanation unless asked.
+
+
+
+
+---
+
+🧠 Notes on Searching Across All Spaces
+
+✔️ Default Behavior
+
+CQL by default searches all content that the user has permission to see across the whole site when no space restriction is applied. There’s no mandatory requirement to specify spaces unless the user wants to narrow it down. 
+
+That means if the user wants “search everywhere including all spaces”, you can omit the space clause entirely.
+
+
+---
+
+⚠️ About “Considering All Spaces” Strictly
+
+CQL doesn’t support a built-in operator like space = ALL — you either:
+
+1. Leave out the space filter, which effectively searches all spaces,
+e.g., CQL: text ~ "budget"
+
+
+2. Explicitly list all spaces you care about:
+e.g., space IN (DEV, QA, HR, SUPPORT) — but this list must be known beforehand. 
+
+
+
+So the best approach when you don’t want to restrict to specific spaces is just to omit the space filter altogether.
+
+
+---
+
+📌 Tips for Text and Phrase Matching
+
+Here are common matching patterns you can support:
+
+User Wants	CQL Pattern
+
+Exact phrase	text ~ "\"phrase here\""
+Starts with	title ~ "plan*"
+Contains keyword	text ~ "keyword"
+Exclude term	text ~ "keyword" AND NOT text ~ "exclude"
+Multiple keywords	(text ~ "a" AND text ~ "b")
+
+
+To search for phrases containing spaces, wrap the phrase in double quotes and escape internal quotes as needed — e.g. text ~ "\"red line\"" for exact phrase matching. 
+
+
+---
+
+🛑 Limitations
+
+✅ You can use CQL to filter by spaces, labels, type, text, title, creator, date, etc. 
+❌ You cannot directly compare two fields in a CQL clause (e.g., no field-to-field comparisons). 
+❌ You cannot make a space = ALL clause — just omit space if you want everything.
+
+
+---
+
+If you want, I can also write a function/pseudocode that generates the CQL from structured user input (for use in scripts or apps). Just let me know!
