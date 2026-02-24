@@ -1,0 +1,81 @@
+from fastapi import FastAPI
+from pydantic import BaseModel
+from fastmcp import FastMCP
+import asyncio
+
+# Your existing modules
+from confluence_agents import create_confluence_agent
+from tools.confluence_search import confluence_search_pages
+from tools.confluence_fetch import confluence_fetch_page
+
+# -------------------------
+# FASTAPI INIT
+# -------------------------
+
+app = FastAPI(title="Confluence Agent Service")
+
+# -------------------------
+# SESSION MANAGEMENT
+# -------------------------
+
+sessions = {}
+
+def get_agent(session_id: str):
+    if session_id not in sessions:
+        sessions[session_id] = create_confluence_agent()
+    return sessions[session_id]
+
+
+# -------------------------
+# CHAT ENDPOINT (AutoGen)
+# -------------------------
+
+class ChatRequest(BaseModel):
+    session_id: str
+    message: str
+
+@app.post("/chat")
+async def chat(req: ChatRequest):
+    agent = get_agent(req.session_id)
+
+    result = await agent.run(task=req.message)
+
+    return {
+        "response": result.messages[-1].content
+    }
+
+
+# -------------------------
+# FASTMCP SETUP
+# -------------------------
+
+mcp = FastMCP("confluence-mcp")
+
+@mcp.tool()
+def search_confluence(
+    keywords: str,
+    excerpt: str = "highlight",
+    additional_cql: str | None = None,
+) -> dict:
+    return confluence_search_pages(
+        keywords=keywords,
+        excerpt=excerpt,
+        additional_cql=additional_cql,
+    )
+
+@mcp.tool()
+def fetch_confluence_page(
+    url: str,
+    extract_links: bool = True,
+    filter_terms: list[str] | None = None,
+    max_links: int | None = None,
+) -> dict:
+    return confluence_fetch_page(
+        url=url,
+        extract_links=extract_links,
+        filter_terms=filter_terms,
+        max_links=max_links,
+    )
+
+# Mount MCP inside FastAPI
+app.mount("/mcp", mcp.http_app())
