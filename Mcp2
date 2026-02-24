@@ -1,0 +1,181 @@
+import os
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from typing import Dict
+
+import fastapi
+import fastmcp
+import uvicorn
+from pydantic import BaseModel
+
+# ==============================
+# IMPORT YOUR EXISTING MODULES
+# ==============================
+
+from confluence_agents import create_confluence_agent
+from tools.confluence_search import confluence_search_pages
+from tools.confluence_fetch import confluence_fetch_page
+
+
+# ==============================
+# CONFIG
+# ==============================
+
+HOST = os.getenv("HOST", "0.0.0.0")
+PORT = int(os.getenv("PORT", 8000))
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("confluence-service")
+
+
+# ==============================
+# SESSION STORE (Replace with Redis in prod)
+# ==============================
+
+class AgentSessionManager:
+    def __init__(self):
+        self._sessions: Dict[str, any] = {}
+
+    def get(self, session_id: str):
+        if session_id not in self._sessions:
+            logger.info(f"Creating new agent session: {session_id}")
+            self._sessions[session_id] = create_confluence_agent()
+        return self._sessions[session_id]
+
+    def clear(self, session_id: str):
+        if session_id in self._sessions:
+            del self._sessions[session_id]
+
+
+session_manager = AgentSessionManager()
+
+
+# ==============================
+# LIFESPAN
+# ==============================
+
+@asynccontextmanager
+async def lifespan(app: fastapi.FastAPI):
+    logger.info("Starting Confluence Agent Service...")
+    yield
+    logger.info("Shutting down Confluence Agent Service...")
+
+
+# ==============================
+# BASE HTTP APP
+# ==============================
+
+http_app = fastapi.FastAPI(
+    title="Confluence Agent API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# ---- Health ----
+
+@http_app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+# ==============================
+# MCP SETUP (Agent-Centric)
+# ==============================
+
+mcp = fastmcp.FastMCP.from_fastapi(
+    app=http_app,
+    name="Confluence Agent MCP"
+)
+
+
+# ============================================
+# MCP TOOL 1 — FULL AUTOGEN AGENT WRAPPER
+# ============================================
+
+@mcp.tool()
+async def ask_confluence_agent(
+    session_id: str,
+    message: str,
+) -> str:
+    """
+    Conversational Confluence assistant powered by AutoGen.
+    Maintains session memory using session_id.
+    """
+    agent = session_manager.get(session_id)
+    result = await agent.run(task=message)
+    return result.messages[-1].content
+
+
+# ============================================
+# MCP TOOL 2 — DIRECT SEARCH (Optional)
+# ============================================
+
+@mcp.tool()
+def search_confluence(
+    keywords: str,
+    excerpt: str = "highlight",
+    additional_cql: str | None = None,
+) -> dict:
+    """
+    Direct Confluence search access.
+    """
+    return confluence_search_pages(
+        keywords=keywords,
+        excerpt=excerpt,
+        additional_cql=additional_cql,
+    )
+
+
+# ============================================
+# MCP TOOL 3 — DIRECT FETCH (Optional)
+# ============================================
+
+@mcp.tool()
+def fetch_confluence_page(
+    url: str,
+    extract_links: bool = True,
+    filter_terms: list[str] | None = None,
+    max_links: int | None = None,
+) -> dict:
+    """
+    Direct Confluence page fetch access.
+    """
+    return confluence_fetch_page(
+        url=url,
+        extract_links=extract_links,
+        filter_terms=filter_terms,
+        max_links=max_links,
+    )
+
+
+# ==============================
+# MCP HTTP APP
+# ==============================
+
+mcp_app = mcp.http_app(path="/mcp")
+
+
+# ==============================
+# FINAL COMPOSED APP
+# ==============================
+
+app = fastapi.FastAPI(
+    title="Confluence Agent + MCP",
+    version="1.0.0",
+    routes=[*http_app.routes, *mcp_app.routes],
+    lifespan=mcp_app.lifespan,
+)
+
+
+# ==============================
+# ENTRYPOINT
+# ==============================
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "app:app",
+        host=HOST,
+        port=PORT,
+        reload=False,
+    )
