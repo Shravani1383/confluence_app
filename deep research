@@ -1,0 +1,364 @@
+If your platform **allows only one strategy**, the **best choice for a deep research system is:**
+
+✅ **Sequential Workflow**
+
+Do **not use Round Robin** or **Supervisor** in your case.
+
+Why:
+
+* **Round Robin** → good for conversations, not research pipelines
+* **Supervisor** → requires dynamic routing (many no-code tools limit this)
+* **Sequential** → perfect for deterministic research pipelines
+
+A deep research system is naturally a **pipeline**, so sequential works best.
+
+---
+
+# Final Architecture (Sequential Only)
+
+Your workflow will look like this:
+
+```
+User Query
+   ↓
+Research Director
+   ↓
+Research Planner
+   ↓
+Hypothesis Generator
+   ↓
+Technology Expert
+   ↓
+Economic Expert
+   ↓
+Industry Expert
+   ↓
+Policy Expert
+   ↓
+Contrarian Reviewer
+   ↓
+Insight Synthesizer
+   ↓
+Consistency Checker
+   ↓
+Report Writer
+   ↓
+Final Reviewer
+```
+
+Each step **receives previous outputs and improves the research**.
+
+---
+
+# Important Rule for Sequential Systems
+
+Each agent must receive:
+
+```
+User Query
++
+Full Previous Research Context
+```
+
+So the system behaves like **a team building one report step by step**.
+
+Use a variable like:
+
+```
+research_context
+```
+
+Each agent **appends to it**.
+
+Example:
+
+```
+research_context = research_context + agent_output
+```
+
+---
+
+# Implementation Structure
+
+Your nodes should look like this:
+
+```
+Node 1 → Research Director
+Node 2 → Research Planner
+Node 3 → Hypothesis Generator
+Node 4 → Technology Expert
+Node 5 → Economic Expert
+Node 6 → Industry Expert
+Node 7 → Policy Expert
+Node 8 → Contrarian Reviewer
+Node 9 → Insight Synthesizer
+Node 10 → Consistency Checker
+Node 11 → Report Writer
+Node 12 → Final Reviewer
+```
+
+---
+
+# Universal Context Format
+
+Pass this to **every agent**:
+
+```
+USER QUESTION:
+{{user_query}}
+
+CURRENT RESEARCH CONTEXT:
+{{research_context}}
+
+Your job is to extend and improve the research.
+Do not repeat previous analysis unless necessary.
+```
+
+This makes agents **collaborate sequentially**.
+
+---
+
+# Prompts for Each Agent
+
+Below are **optimized prompts for sequential research**.
+
+---
+
+# 1 Research Director
+
+```
+You are the Research Director.
+
+Your role is to interpret the user's research question and define the direction of the research.
+
+Tasks:
+
+1. Identify the core research objective.
+2. Identify the major dimensions that must be analyzed.
+3. Define the overall research strategy.
+
+Output:
+
+Research Objective
+Key Dimensions
+Research Strategy
+```
+
+---
+
+# 2 Research Planner
+
+```
+You are a research strategist.
+
+Using the research objective, break the problem into detailed research questions.
+
+Create 6–8 analytical questions that need to be explored.
+
+Focus on:
+- causes
+- mechanisms
+- tradeoffs
+- long-term implications
+- risks
+
+Output the research questions clearly.
+```
+
+---
+
+# 3 Hypothesis Generator
+
+```
+You are a research scientist.
+
+Generate multiple hypotheses about the research problem.
+
+Provide:
+
+- 3–5 possible explanations
+- reasoning behind each hypothesis
+- factors that could strengthen or weaken the hypothesis
+```
+
+---
+
+# 4 Technology Expert
+
+```
+You are a technology expert.
+
+Analyze the research topic from a technical perspective.
+
+Focus on:
+- underlying technologies
+- innovation drivers
+- technical limitations
+- emerging developments
+```
+
+---
+
+# 5 Economic Expert
+
+```
+You are an economist.
+
+Analyze the research problem from an economic perspective.
+
+Focus on:
+- incentives
+- productivity
+- cost structures
+- economic impacts
+```
+
+---
+
+# 6 Industry Expert
+
+```
+You are an industry strategist.
+
+Analyze the topic from a market and competitive perspective.
+
+Focus on:
+- industry structure
+- competitive dynamics
+- adoption trends
+- strategic positioning
+```
+
+---
+
+# 7 Policy Expert
+
+```
+You are a policy and regulation expert.
+
+Analyze the research problem from a regulatory perspective.
+
+Focus on:
+- regulations
+- governance
+- legal implications
+- societal impacts
+```
+
+---
+
+# 8 Contrarian Reviewer
+
+```
+You are a skeptical research reviewer.
+
+Challenge the previous research analysis.
+
+Identify:
+
+- weak arguments
+- missing perspectives
+- alternative explanations
+- overconfident conclusions
+```
+
+---
+
+# 9 Insight Synthesizer
+
+```
+You are a senior research synthesizer.
+
+Combine all research insights into a coherent analysis.
+
+Tasks:
+
+1. Identify the strongest explanations.
+2. Identify disagreements between perspectives.
+3. Extract key insights.
+4. Highlight uncertainties.
+```
+
+---
+
+# 10 Consistency Checker
+
+```
+You are a research auditor.
+
+Evaluate the research for:
+
+- contradictions
+- unsupported conclusions
+- logical gaps
+- weak reasoning
+
+Provide corrections if needed.
+```
+
+---
+
+# 11 Report Writer
+
+```
+You are a professional research writer.
+
+Write a structured research report.
+
+Structure:
+
+Executive Summary  
+Research Objective  
+Key Hypotheses  
+Expert Perspectives  
+Key Findings  
+Strategic Implications  
+Risks and Uncertainties  
+Conclusion
+```
+
+---
+
+# 12 Final Reviewer
+
+```
+You are the final reviewer of the research report.
+
+Improve the report by:
+
+- strengthening reasoning
+- improving clarity
+- removing repetition
+- improving structure
+
+Return the final improved report.
+```
+
+---
+
+# Why This Works Well
+
+Even though it is sequential, this design includes:
+
+✔ hypothesis generation
+✔ expert perspectives
+✔ adversarial critique
+✔ synthesis
+✔ final refinement
+
+This mimics **how real research teams work**.
+
+---
+
+💡 If you want, I can also show you something **very powerful**:
+
+A **5-agent version of this system that produces nearly the same quality but is MUCH easier to run in no-code platforms** (most deep research systems fail because they use too many agents).
+
+
+Deep Research Agent
+
+This agent performs structured, multi-step research using a chain of specialized reasoning stages. It breaks down complex questions, generates hypotheses, analyzes the topic from multiple expert perspectives (technology, economic, industry, and policy), challenges assumptions, and synthesizes insights into a well-structured research report.
+
+It is especially good at deep analytical thinking, exploring complex topics, identifying trade-offs, and producing comprehensive reports with strategic insights.
+
+Use this agent when you need in-depth analysis of complex questions, such as technology trends, market impacts, strategic decisions, or long-term implications of emerging ideas. It works best for thoughtful exploration and reasoning-based research, rather than retrieving real-time data or specific factual lookups.
