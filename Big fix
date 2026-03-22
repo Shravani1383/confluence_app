@@ -1,0 +1,218 @@
+Got it — now the full picture is clear, and this is not a bug anymore, it’s a design conflict between:
+
+📝 editor input (prompt)
+
+📄 uploaded files
+
+💬 previous response (context)
+
+
+Right now your system is implicitly prioritizing context over prompt, which is why in the second screen:
+
+> 👉 Buttons act on previous response instead of newly typed text
+
+
+
+
+---
+
+🧠 What’s happening in your code
+
+From your logic and logs:
+
+{ prompt: 'g', context: 'hi', verifiedFileCount: 0 }
+
+And inside handleActionClick:
+
+populatedPrompt: `${context}${AnswerDelimiterQuestion}${promptTemplate}`,
+
+👉 You are always injecting context, regardless of whether the user typed something new.
+
+So even if the user types:
+
+"hello"
+
+Your final request becomes something like:
+
+"hi <delimiter> rephrase this"
+
+🚨 → The new prompt is being ignored or overshadowed.
+
+
+---
+
+🔥 Root Cause
+
+You don’t have a clear source-of-truth priority between:
+
+1. ✍️ Typed input (prompt)
+
+
+2. 📄 Files (sessionFiles)
+
+
+3. 💬 Previous response (context)
+
+
+
+
+---
+
+✅ What you SHOULD define (very important)
+
+You need an explicit priority model like:
+
+🥇 Priority Order (recommended)
+
+1. prompt (typed text)
+2. files (if no prompt)
+3. context (fallback only)
+
+
+---
+
+✅ Fix: Make input source explicit
+
+Step 1 — Decide the actual input
+
+const hasPrompt = !!prompt?.trim();
+const hasFiles = verifiedFileCount > 0;
+
+let inputSource;
+
+if (hasPrompt) {
+  inputSource = prompt;
+} else if (hasFiles) {
+  inputSource = "FILES"; // handled separately
+} else {
+  inputSource = context;
+}
+
+
+---
+
+Step 2 — Use it correctly in request
+
+Replace this:
+
+populatedPrompt: `${context}${AnswerDelimiterQuestion}${promptTemplate}`,
+
+With something like:
+
+let populatedPrompt;
+
+if (hasPrompt) {
+  populatedPrompt = `${promptTemplate}\n\n${prompt}`;
+} else if (hasFiles) {
+  populatedPrompt = `${promptTemplate}`; // backend uses files
+} else {
+  populatedPrompt = `${promptTemplate}\n\n${context}`;
+}
+
+
+---
+
+🧠 Why this fixes your issue
+
+Current behavior ❌
+
+Context is always included → overrides typed text
+
+
+Fixed behavior ✅
+
+If user types → ALWAYS use that
+
+If no text → fall back to files or context
+
+
+
+---
+
+📌 Special case: PDFs (your concern)
+
+You said:
+
+> “for pdf files it works so we translate docs”
+
+
+
+That’s because:
+
+No prompt → system falls back to files/context → correct
+
+
+With the new logic:
+
+Files still work ✅
+
+Typed input overrides files (expected UX) ✅
+
+
+
+---
+
+🎯 UX Recommendation (very important)
+
+Right now users are confused because the system is ambiguous.
+
+👉 Add a small hint in UI:
+
+When typing:
+
+> “Actions will apply to typed text”
+
+
+
+When no text + files:
+
+> “Actions will apply to uploaded files”
+
+
+
+When neither:
+
+> “Actions will apply to previous response”
+
+
+
+
+
+---
+
+🔥 Best Practice (clean architecture)
+
+Instead of guessing, pass an explicit flag:
+
+createTaskRequest({
+  source: hasPrompt ? "prompt" : hasFiles ? "files" : "context",
+  prompt,
+  context,
+});
+
+
+---
+
+✅ Final takeaway
+
+Your issue is NOT about disabling anymore — it’s about:
+
+> ❗ Implicit context overriding user intent
+
+
+
+Fix it by:
+
+Defining priority
+
+Building populatedPrompt accordingly
+
+
+
+---
+
+If you want, I can help you:
+
+Refactor handleActionClick cleanly
+
+Or design a proper state model for this (this is exactly where most AI UIs break)
