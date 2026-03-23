@@ -46,3 +46,22 @@ Organization & Insights
 ---
 
 If you want, I can next convert these into actual agent prompts + expected tool calls flow, which is usually what teams use in production.
+
+
+
+Here’s a concise summary of the capabilities in 5–6 key points:
+
+Repository Management – Create, delete, list, and retrieve details of repositories (user or organization level)
+
+Code & File Operations – Read, create, update, and delete files within repositories
+
+Branch Management – Create, rename, list, and merge branches or references
+
+Pull Request Automation – Create, review, list, and merge pull requests, including inspecting PR files and status
+
+Issue & Collaboration Handling – Add, update, delete, and review comments on issues and PRs
+
+Organization & Insights – Access organization details, list repos, contributors, and user org memberships
+
+
+If you want it even tighter (like 3 bullets for exec-level), I can compress it further.
