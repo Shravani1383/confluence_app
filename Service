@@ -1,0 +1,138 @@
+"""
+service.py — Chat service integration layer
+============================================
+Exposes a clean async interface for the web/API layer to call.
+Handles:
+  - Request validation
+  - Pipeline lifecycle (create once, reuse across requests)
+  - Structured response schema
+  - Timeout enforcement
+  - Per-request cancellation
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+from dataclasses import dataclass, field
+from typing import AsyncIterator, Optional
+
+from autogen_core import CancellationToken
+
+from .confluence_agents import ConfluencePipeline, PipelineContext, create_confluence_agent
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Request / Response schemas
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ConfluenceRequest:
+    query: str
+    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    timeout_seconds: float = 120.0
+
+
+@dataclass
+class ConfluenceResponse:
+    request_id: str
+    answer: str
+    intent: str
+    latency_ms: float
+    success: bool
+    error: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Service (singleton-friendly)
+# ---------------------------------------------------------------------------
+
+class ConfluenceService:
+    """
+    Wraps ConfluencePipeline with:
+      - timeout enforcement via asyncio.wait_for
+      - per-request CancellationToken
+      - structured logging with request_id
+      - clean response serialisation
+    """
+
+    def __init__(self) -> None:
+        self._pipeline: Optional[ConfluencePipeline] = None
+
+    def _get_pipeline(self) -> ConfluencePipeline:
+        # Lazy init — safe for singleton use
+        if self._pipeline is None:
+            self._pipeline = create_confluence_agent()
+            logger.info("ConfluenceService: pipeline initialised")
+        return self._pipeline
+
+    async def handle(self, request: ConfluenceRequest) -> ConfluenceResponse:
+        logger.info(
+            "ConfluenceService.handle | request_id=%s | query=%r",
+            request.request_id,
+            request.query[:120],
+        )
+
+        token = CancellationToken()
+        pipeline = self._get_pipeline()
+
+        try:
+            ctx: PipelineContext = await asyncio.wait_for(
+                pipeline.run(request.query, cancellation_token=token),
+                timeout=request.timeout_seconds,
+            )
+            return ConfluenceResponse(
+                request_id=request.request_id,
+                answer=ctx.final_answer,
+                intent=ctx.intent.value,
+                latency_ms=ctx.latency_ms.get("total", 0.0),
+                success=ctx.error is None,
+                error=ctx.error,
+            )
+
+        except asyncio.TimeoutError:
+            token.cancel()
+            msg = f"Request timed out after {request.timeout_seconds}s"
+            logger.warning("ConfluenceService: %s | request_id=%s", msg, request.request_id)
+            return ConfluenceResponse(
+                request_id=request.request_id,
+                answer=msg,
+                intent="unknown",
+                latency_ms=request.timeout_seconds * 1000,
+                success=False,
+                error="timeout",
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "ConfluenceService: unhandled error | request_id=%s", request.request_id
+            )
+            return ConfluenceResponse(
+                request_id=request.request_id,
+                answer=f"Unexpected error: {exc}",
+                intent="unknown",
+                latency_ms=0.0,
+                success=False,
+                error=str(exc),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton
+# ---------------------------------------------------------------------------
+_service_instance: Optional[ConfluenceService] = None
+
+
+def get_confluence_service() -> ConfluenceService:
+    global _service_instance
+    if _service_instance is None:
+        _service_instance = ConfluenceService()
+    return _service_instance
+
+
+async def handle_confluence_query(query: str, timeout: float = 120.0) -> ConfluenceResponse:
+    """Convenience function for simple call sites."""
+    svc = get_confluence_service()
+    return await svc.handle(ConfluenceRequest(query=query, timeout_seconds=timeout))
