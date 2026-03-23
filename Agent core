@@ -1,0 +1,362 @@
+Perfect — let’s put everything together into a clean, production-style E2E implementation for your use case:
+
+> ✅ Planner-driven
+✅ Supports search / fetch / recursive link fetch
+✅ Handles direct URL queries
+✅ Bounded + safe
+✅ Final structured JSON output
+
+
+
+No fluff — this is something you can plug into your system.
+
+
+---
+
+🧠 Final Architecture
+
+User Query
+   ↓
+Planner Agent (decides next step)
+   ↓
+Tool Execution (search / fetch / fetch_links)
+   ↓
+Context Memory (history + visited URLs)
+   ↓
+Loop (bounded)
+   ↓
+Synthesizer Agent (final JSON)
+
+
+---
+
+✅ 1. Setup Tools
+
+import json
+import re
+from typing import List, Dict, Any
+
+# --- Your existing functions ---
+def confluence_search_pages(query: str) -> List[Dict]:
+    ...
+
+def confluence_fetch_page(url: str) -> Dict:
+    ...
+
+
+---
+
+✅ 2. Utility Functions
+
+def extract_urls(text: str) -> List[str]:
+    return list(set(re.findall(r'https?://[^\s)]+', text)))
+
+def contains_url(text: str) -> bool:
+    return bool(re.search(r'https?://', text))
+
+
+---
+
+✅ 3. Planner Prompt
+
+You are a planning agent that decides the next best action to answer a user query using tools.
+
+Available actions:
+
+1. "search" → find relevant Confluence pages
+2. "fetch" → retrieve full page content from a URL
+3. "fetch_links" → fetch relevant URLs found in previous content
+4. "final" → produce final answer
+
+Return JSON:
+
+{
+"action": "search" | "fetch" | "fetch_links" | "final",
+"input": string,
+"reason": string
+}
+
+Rules:
+
+- If user provides a URL → start with "fetch"
+- If no URL → start with "search"
+- Use "fetch_links" ONLY if additional URLs are useful
+- NEVER fetch the same URL twice
+- Be selective (max 2–3 links at a time)
+- Stop early if enough information is available
+- Avoid unnecessary steps
+
+You will receive:
+
+- query
+- history (previous actions, results, extracted URLs)
+
+Decide the next best action.
+---
+
+✅ 4. Final Synthesizer Prompt
+
+You are a Confluence knowledge assistant.
+
+Input:
+
+- User query
+- Retrieved content from multiple pages
+
+Task:
+
+- Generate a clear, accurate answer using ONLY provided content
+
+Output STRICT JSON:
+
+{
+"status": "success" | "partial" | "error",
+"answer": string,
+"sources": [
+{
+"title": string,
+"url": string
+}
+],
+"errors": [string]
+}
+
+Rules:
+
+- No hallucination
+- No extra text outside JSON
+- Keep answer concise but complete
+- Include only relevant sources
+---
+
+✅ 5. Initialize Agents
+
+from autogen_agentchat.agents import AssistantAgent
+
+planner = AssistantAgent(
+    name="planner",
+    system_message=PLANNER_PROMPT,
+    model_client=model_client,
+)
+
+synthesizer = AssistantAgent(
+    name="synthesizer",
+    system_message=FINAL_PROMPT,
+    model_client=model_client,
+)
+
+
+---
+
+✅ 6. Core Orchestration Loop (IMPORTANT)
+
+async def run_confluence_agent(query: str):
+    context = {
+        "query": query,
+        "history": []
+    }
+
+    visited_urls = set()
+
+    MAX_STEPS = 8
+    MAX_FETCHES = 5
+
+    for step in range(MAX_STEPS):
+
+        planner_input = {
+            "query": context["query"],
+            "history": context["history"]
+        }
+
+        plan = await planner.run(task=json.dumps(planner_input))
+        plan_json = json.loads(plan.messages[-1].content)
+
+        action = plan_json["action"]
+        action_input = plan_json["input"]
+
+        print(f"\n[Step {step}] → {action}: {action_input}")
+
+        # ---------------- SEARCH ----------------
+        if action == "search":
+            result = confluence_search_pages(action_input)
+
+            context["history"].append({
+                "action": "search",
+                "input": action_input,
+                "result": result
+            })
+
+        # ---------------- FETCH ----------------
+        elif action == "fetch":
+            if action_input in visited_urls:
+                continue
+
+            visited_urls.add(action_input)
+
+            page = confluence_fetch_page(action_input)
+
+            extracted_urls = extract_urls(page.get("content", ""))
+
+            context["history"].append({
+                "action": "fetch",
+                "input": action_input,
+                "result": page,
+                "extracted_urls": extracted_urls
+            })
+
+        # ---------------- FETCH LINKS ----------------
+        elif action == "fetch_links":
+            try:
+                urls = json.loads(action_input)
+            except:
+                urls = []
+
+            fetched_pages = []
+
+            for url in urls:
+                if url not in visited_urls and len(visited_urls) < MAX_FETCHES:
+                    visited_urls.add(url)
+                    page = confluence_fetch_page(url)
+                    fetched_pages.append(page)
+
+            context["history"].append({
+                "action": "fetch_links",
+                "input": urls,
+                "result": fetched_pages
+            })
+
+        # ---------------- FINAL ----------------
+        elif action == "final":
+            final_input = {
+                "query": context["query"],
+                "history": context["history"]
+            }
+
+            final = await synthesizer.run(task=json.dumps(final_input))
+            return json.loads(final.messages[-1].content)
+
+        else:
+            raise ValueError(f"Unknown action: {action}")
+
+    return {
+        "status": "error",
+        "answer": "Max steps reached",
+        "sources": [],
+        "errors": ["loop exceeded"]
+    }
+
+
+---
+
+✅ 7. Example Usage
+
+response = await run_confluence_agent(
+    "Explain onboarding process from https://confluence/page123"
+)
+
+print(response)
+
+
+---
+
+🔥 What This Gives You
+
+✅ Handles ALL cases:
+
+normal query → search → fetch
+
+direct URL → fetch
+
+deep knowledge → fetch_links recursion
+
+
+
+---
+
+✅ Safe:
+
+max steps
+
+max fetches
+
+visited tracking
+
+
+
+---
+
+✅ Flexible:
+
+planner decides flow dynamically
+
+no hardcoded branching
+
+
+
+---
+
+🚀 Optional (HIGHLY Recommended Enhancements)
+
+1. Add content summarization (token control)
+
+Before storing:
+
+page["content"] = page["content"][:3000]
+
+
+---
+
+2. Add scoring before fetch_links
+
+Let planner choose top 2 only
+
+
+---
+
+3. Parallel fetch (speed boost)
+
+import asyncio
+
+await asyncio.gather(*[fetch(url) for url in urls])
+
+
+---
+
+4. Add caching (huge win)
+
+cache = {}
+
+if url in cache:
+    return cache[url]
+
+
+---
+
+🏁 Final Insight
+
+> 🔑 You now have a planner-driven retrieval system with recursive reasoning
+
+
+
+This is:
+
+more powerful than basic RAG
+
+more controlled than GroupChat
+
+closer to real-world agent systems
+
+
+
+---
+
+If you want next step, I can:
+
+plug this into your existing codebase
+
+add streaming + UI
+
+or convert this into RoutedAgent pub/sub version
+
+
+Just tell me 👍
