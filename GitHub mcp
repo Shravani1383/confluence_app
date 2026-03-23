@@ -65,3 +65,6 @@ Organization & Insights – Access organization details, list repos, contributor
 
 
 If you want it even tighter (like 3 bullets for exec-level), I can compress it further.
+
+
+In Agent Studio, once MCP GitHub tools are connected and access (e.g., HK-AGENTHUB-GIT) is set, you can control GitHub using simple natural language in the playground. Just describe what you want—like creating a repo, updating code, or reviewing a PR—and the agent automatically uses the right tools to complete the task.
