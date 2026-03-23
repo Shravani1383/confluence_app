@@ -1,0 +1,48 @@
+Here’s a clean combined version with summarized capabilities + mapped examples 👇
+
+
+---
+
+✅ Capabilities (5–6 points)
+
+Repository Management – Create, delete, list, and retrieve repository details
+
+Code & File Operations – Read, create, update, and delete files
+
+Branch Management – Create, rename, and merge branches
+
+Pull Request Automation – Create, review, and merge pull requests
+
+Issue & Collaboration Handling – Manage comments on issues and PRs
+
+Organization & Insights – Access org data, repos, and contributors
+
+
+
+---
+
+🚀 Examples (mapped to capabilities)
+
+Repository Management
+→ “Create a new repo called payment-service with initial README”
+
+Code & File Operations
+→ “Update config.yaml with new API endpoint”
+
+Branch Management
+→ “Create a feature branch feature/login-api from main”
+
+Pull Request Automation
+→ “Create a PR for the login feature and merge if approved”
+
+Issue & Collaboration Handling
+→ “Review PR #22 and add comments for improvements”
+
+Organization & Insights
+→ “List all repositories in the org and their contributors”
+
+
+
+---
+
+If you want, I can next convert these into actual agent prompts + expected tool calls flow, which is usually what teams use in production.
