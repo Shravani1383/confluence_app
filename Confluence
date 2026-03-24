@@ -1,0 +1,392 @@
+Perfect—this is where your system becomes truly agentic and production-grade.
+
+We’ll upgrade your LangGraph into:
+
+🧠 Capabilities you asked for
+
+✅ Dynamic tool selection via LLM (no hardcoded router)
+
+✅ Multi-step reasoning flow
+→ search → rank → fetch → synthesize
+
+
+
+---
+
+🧠 New Graph (Advanced)
+
+User Query
+   ↓
+[Planner (LLM decides tools)]
+   ↓
+[Tool Selector]
+   ↓
+[Search Node]
+   ↓
+[Rank Node]
+   ↓
+[Fetch Node (top N)]
+   ↓
+[Synthesize Node]
+   ↓
+[Final Output]
+
+
+---
+
+🧱 Step 1: Upgrade State
+
+We now track multiple documents + decisions.
+
+# graph/state.py
+from typing import TypedDict, List, Optional, Dict
+
+class AgentState(TypedDict):
+    user_query: str
+
+    # planning
+    plan: Optional[Dict]
+
+    # search
+    search_results: List[Dict]
+
+    # ranking
+    selected_docs: List[Dict]
+
+    # fetched content
+    fetched_docs: List[Dict]
+
+    # output
+    final_answer: Optional[str]
+
+    errors: List[str]
+
+
+---
+
+🧠 Step 2: LLM Planner (Dynamic Tool Selection)
+
+No more static "search|fetch" — the LLM decides steps.
+
+# graph/nodes/planner.py
+import json
+
+async def planner_node(state, llm):
+    prompt = f"""
+You are an intelligent planner.
+
+User query: {state['user_query']}
+
+Available tools:
+- confluence_search(query)
+- confluence_fetch(url)
+
+Decide a multi-step plan.
+
+Return JSON:
+{{
+  "steps": [
+    {{ "tool": "confluence_search", "input": "..." }},
+    {{ "tool": "rank_results" }},
+    {{ "tool": "confluence_fetch", "input": ["url1", "url2"] }},
+    {{ "tool": "synthesize" }}
+  ]
+}}
+"""
+
+    response = await llm.invoke(prompt)
+
+    try:
+        plan = json.loads(response)
+        return {**state, "plan": plan}
+    except Exception as e:
+        return {
+            **state,
+            "errors": state["errors"] + [f"Planner error: {str(e)}"]
+        }
+
+
+---
+
+🔀 Step 3: Dynamic Router
+
+Instead of fixed edges, we read the plan.
+
+# graph/nodes/router.py
+def route_next(state):
+    steps = state.get("plan", {}).get("steps", [])
+
+    if not steps:
+        return "final"
+
+    next_step = steps[0]["tool"]
+
+    mapping = {
+        "confluence_search": "search",
+        "rank_results": "rank",
+        "confluence_fetch": "fetch",
+        "synthesize": "synthesize"
+    }
+
+    return mapping.get(next_step, "final")
+
+
+---
+
+🔍 Step 4: Search Node (Structured Output)
+
+# graph/nodes/search.py
+async def search_node(state):
+    step = state["plan"]["steps"].pop(0)
+
+    query = step.get("input")
+
+    results = await confluence_search_pages(query)
+
+    # Expect structured results
+    # [{title, url, snippet}]
+    return {
+        **state,
+        "search_results": results
+    }
+
+
+---
+
+🧠 Step 5: Rank Node (LLM-powered)
+
+This is 🔥 critical for quality.
+
+# graph/nodes/rank.py
+import json
+
+async def rank_node(state, llm):
+    results = state["search_results"]
+
+    prompt = f"""
+Rank the most relevant Confluence pages for this query:
+
+Query: {state['user_query']}
+
+Results:
+{results}
+
+Return top 3 URLs as JSON:
+{{ "top_urls": ["url1", "url2", "url3"] }}
+"""
+
+    response = await llm.invoke(prompt)
+
+    try:
+        data = json.loads(response)
+        selected = [
+            r for r in results if r["url"] in data["top_urls"]
+        ]
+        return {**state, "selected_docs": selected}
+    except:
+        return {
+            **state,
+            "selected_docs": results[:3]  # fallback
+        }
+
+
+---
+
+📄 Step 6: Fetch Node (Multi-doc)
+
+# graph/nodes/fetch.py
+async def fetch_node(state):
+    step = state["plan"]["steps"].pop(0)
+
+    urls = step.get("input") or [doc["url"] for doc in state["selected_docs"]]
+
+    docs = []
+    for url in urls:
+        try:
+            content = await confluence_fetch_page(url)
+            docs.append({"url": url, "content": content})
+        except Exception as e:
+            state["errors"].append(str(e))
+
+    return {
+        **state,
+        "fetched_docs": docs
+    }
+
+
+---
+
+🧾 Step 7: Synthesis Node (Multi-doc reasoning)
+
+# graph/nodes/synthesize.py
+async def synthesize_node(state, llm):
+    docs = state["fetched_docs"]
+
+    prompt = f"""
+Answer the user's question using the following Confluence pages.
+
+Question:
+{state['user_query']}
+
+Documents:
+{docs}
+
+Instructions:
+- Combine information
+- Remove redundancy
+- Be concise
+- Cite URLs if useful
+"""
+
+    response = await llm.invoke(prompt)
+
+    return {
+        **state,
+        "final_answer": response
+    }
+
+
+---
+
+🕸️ Step 8: Build Dynamic Graph
+
+# graph/build_graph.py
+from langgraph.graph import StateGraph, END
+
+def build_graph(llm):
+
+    graph = StateGraph(AgentState)
+
+    graph.add_node("planner", lambda s: planner_node(s, llm))
+    graph.add_node("search", search_node)
+    graph.add_node("rank", lambda s: rank_node(s, llm))
+    graph.add_node("fetch", fetch_node)
+    graph.add_node("synthesize", lambda s: synthesize_node(s, llm))
+    graph.add_node("final", final_node)
+
+    graph.set_entry_point("planner")
+
+    # Dynamic routing loop
+    graph.add_conditional_edges(
+        "planner",
+        route_next,
+        {
+            "search": "search",
+            "rank": "rank",
+            "fetch": "fetch",
+            "synthesize": "synthesize",
+            "final": "final",
+        }
+    )
+
+    # Loop after each step
+    for node in ["search", "rank", "fetch", "synthesize"]:
+        graph.add_conditional_edges(
+            node,
+            route_next,
+            {
+                "search": "search",
+                "rank": "rank",
+                "fetch": "fetch",
+                "synthesize": "synthesize",
+                "final": "final",
+            }
+        )
+
+    graph.add_edge("final", END)
+
+    return graph.compile()
+
+
+---
+
+🚀 What You Just Built
+
+🧠 1. True Agentic Planning
+
+LLM defines execution plan dynamically
+
+
+🔄 2. Multi-step Reasoning
+
+Search → Rank → Fetch → Combine
+
+
+🎯 3. High-quality Retrieval
+
+Ranking avoids irrelevant pages
+
+
+🔧 4. Tool Abstraction
+
+Easy to add:
+
+Jira
+
+Slack
+
+Database queries
+
+
+
+
+---
+
+🔥 Next-Level Upgrades (Highly Recommended)
+
+✅ Add Parallel Fetch (HUGE speed boost)
+
+import asyncio
+docs = await asyncio.gather(*[
+    confluence_fetch_page(url) for url in urls
+])
+
+
+---
+
+✅ Add Confidence Scoring Node
+
+Let LLM decide:
+
+> "Do I have enough info or should I search again?"
+
+
+
+
+---
+
+✅ Add Guardrails Node
+
+Validate:
+
+JSON schema
+
+hallucinations
+
+empty answers
+
+
+
+---
+
+✅ Add Streaming Synthesis
+
+Stream tokens while combining docs.
+
+
+---
+
+👍 If You Want Next
+
+I can help you upgrade this into:
+
+🧠 Self-reflective agent (auto-corrects bad answers)
+
+🔁 ReAct-style loop (iterative reasoning)
+
+⚡ Caching layer (avoid repeated fetches)
+
+📊 Observability dashboard (trace each node)
+
+
+Just tell me what level you want 🚀
