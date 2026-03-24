@@ -1,0 +1,309 @@
+Perfect — now we’re getting into real build mode 🔥
+You’ve got all the MCP tools ready (Jira + GitHub), so let’s do this the right way: agent-first, then workflow.
+
+We’ll start by defining clean, production-ready agents that directly map to your MCP capabilities.
+
+
+---
+
+🧱 Step 1: Define Core Agents (v1)
+
+We’ll build 4 core agents first (lean but powerful):
+
+1. Jira Intake Agent
+
+
+2. Repo Analysis Agent
+
+
+3. Planning Agent
+
+
+4. Code + PR Agent
+
+
+
+👉 This is enough to get end-to-end working system
+
+
+---
+
+🤖 Agent 1: aicoe-jira-intake-agent
+
+Goal
+
+Fetch and structure Jira ticket data
+
+MCP Tools You’ll Use
+
+mcp-atlassian-server-jira-get-issue
+
+mcp-jira-jira-get-issue
+
+
+
+---
+
+Prompt (Agent Definition)
+
+You are a Jira Intake Agent.
+
+Your job is to:
+1. Take a Jira ticket ID as input
+2. Fetch ticket details using MCP Jira tools
+3. Extract:
+   - title
+   - description
+   - acceptance criteria
+   - issue type (bug/feature)
+
+4. Normalize output into structured JSON
+
+Rules:
+- Do not modify content
+- Keep output clean and structured
+
+
+---
+
+Output Format
+
+{
+  "ticket_id": "DEV-101",
+  "title": "",
+  "description": "",
+  "acceptance_criteria": [],
+  "type": "bug | feature"
+}
+
+
+---
+
+🔍 Agent 2: aicoe-repo-analysis-agent
+
+Goal
+
+Understand repo structure and find relevant files
+
+MCP Tools
+
+mcp-hsbc-github-get-repository
+
+mcp-hsbc-github-get-content
+
+mcp-hsbc-github-list-branches
+
+
+
+---
+
+Prompt
+
+You are a Repository Analysis Agent.
+
+Your job is to:
+1. Read the repository structure
+2. Identify relevant files/modules for the given task
+3. Understand coding patterns and structure
+
+Output:
+- list of relevant files
+- reasoning for selection
+
+Rules:
+- Do not generate code
+- Focus only on understanding the repo
+
+
+---
+
+Output
+
+{
+  "relevant_files": ["auth.py", "routes/login.py"],
+  "notes": "login logic handled in auth.py"
+}
+
+
+---
+
+🧠 Agent 3: aicoe-planning-agent
+
+Goal
+
+Convert Jira + repo context → execution plan
+
+
+---
+
+Prompt
+
+You are a Planning Agent.
+
+Input:
+- Jira ticket details
+- Repository analysis
+
+Your job:
+1. Break task into steps
+2. Identify:
+   - files to modify
+   - sequence of changes
+3. Keep plan minimal and executable
+
+Do NOT write code.
+
+Output structured plan.
+
+
+---
+
+Output
+
+{
+  "steps": [
+    "update login validation logic",
+    "add error handling"
+  ],
+  "files": ["auth.py"]
+}
+
+
+---
+
+💻 Agent 4: aicoe-code-pr-agent
+
+Goal
+
+Execute plan → commit → PR
+
+
+---
+
+MCP Tools
+
+mcp-hsbc-github-create-branch
+
+mcp-hsbc-github-upsert-file
+
+mcp-hsbc-github-create-pull-request
+
+
+
+---
+
+Prompt
+
+You are a Code Implementation and PR Agent.
+
+Input:
+- execution plan
+- repo info
+- jira ticket
+
+Your job:
+1. Create a new branch:
+   - feature/<ticket-id> or bugfix/<ticket-id>
+
+2. Implement changes:
+   - modify only specified files
+   - follow repo conventions
+
+3. Commit changes
+
+4. Create Pull Request:
+   - title from Jira
+   - description includes:
+     - summary
+     - changes
+     - linked ticket
+
+Rules:
+- Keep changes minimal
+- Do not modify unrelated files
+
+
+---
+
+Output
+
+{
+  "branch": "feature/DEV-101",
+  "pr_url": "https://github.com/.../pull/1",
+  "status": "created"
+}
+
+
+---
+
+🔁 Step 2 (Next): Workflow (we’ll build after this)
+
+Once these agents are ready, we’ll connect:
+
+Jira Intake
+    ↓
+Repo Analysis
+    ↓
+Planning
+    ↓
+Code + PR
+
+
+---
+
+⚡ What You Should Do Right Now
+
+Start implementing Agent 1 + Agent 2 first:
+
+Priority Order:
+
+1. ✅ Jira Intake Agent
+
+
+2. ✅ Repo Analysis Agent
+
+
+3. ⏭ Planning Agent
+
+
+4. ⏭ Code PR Agent
+
+
+
+
+---
+
+🧠 Important Insight (don’t skip this)
+
+Your power comes from:
+
+separation of concerns
+
+not one giant agent
+
+
+
+---
+
+🚀 Next Step (tell me when ready)
+
+Once you’ve set up:
+
+Jira intake working
+
+Repo read working
+
+
+👉 I’ll help you:
+
+Wire agents into a working workflow
+
+Add PR review loop (very impressive feature)
+
+Handle edge cases (failures, retries)
+
+
+
+---
+
+Let’s build this properly — you’re very close to something seriously impressive 👏
