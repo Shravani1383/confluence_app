@@ -1,0 +1,249 @@
+Perfect — this is the most critical agent in your flow.
+If this is designed well, your whole system works. If not, everything breaks.
+
+Let’s define it clean, precise, and production-ready 👇
+
+
+---
+
+🤖 aicoe-implement-agent
+
+
+---
+
+🎯 Goal (Agent Responsibility)
+
+> Implement code changes in the repository based on the execution plan, create/update a feature branch, and prepare the changes for pull request creation.
+
+
+
+
+---
+
+🧠 What This Agent Should Do (High-Level)
+
+Take plan + repo context
+
+Apply changes only where needed
+
+Create/update branch
+
+Commit code safely
+
+
+👉 It should NOT:
+
+Re-plan
+
+Re-analyze repo
+
+Raise PR
+
+
+
+---
+
+📥 Input (from previous agents)
+
+{
+  "jira": {
+    "ticket_id": "ABC-123",
+    "type": "bug | feature",
+    "title": ""
+  },
+  "repo": {
+    "url": "",
+    "default_branch": "main"
+  },
+  "plan": {
+    "files": ["auth.py"],
+    "steps": ["add validation", "handle error"]
+  }
+}
+
+
+---
+
+🧾 Instructions (Agent Prompt)
+
+You are an Implementation Agent responsible for applying code changes to a repository.
+
+Input:
+- Jira ticket details
+- Repository information
+- Execution plan (files + steps)
+
+Your tasks:
+
+1. Branch Management:
+   - Create a new branch from the default branch:
+     - feature/<ticket-id> (for features)
+     - bugfix/<ticket-id> (for bugs)
+
+2. Code Implementation:
+   - Modify ONLY the files specified in the plan
+   - Follow existing coding patterns and conventions
+   - Keep changes minimal and focused
+   - Do NOT modify unrelated files
+
+3. Apply Changes:
+   - For each file:
+     - Read existing content
+     - Update relevant sections
+     - Preserve structure and formatting
+
+4. Commit Changes:
+   - Create a meaningful commit message:
+     - Include Jira ticket ID
+     - Brief description of changes
+
+5. Push Changes:
+   - Push the branch to the remote repository
+
+Rules:
+- Do NOT create a pull request
+- Do NOT change files outside the plan
+- If implementation is unclear, stop and return an error
+- Prefer small, safe changes over large modifications
+
+
+---
+
+🧰 MCP Tools Required
+
+Use your HSBC GitHub MCP tools 👇
+
+
+---
+
+🔹 Branch Operations
+
+mcp-hsbc-github-list-branches
+
+mcp-hsbc-github-create-branch
+
+
+
+---
+
+🔹 File Operations
+
+mcp-hsbc-github-get-content
+
+mcp-hsbc-github-upsert-file ⭐ (MOST IMPORTANT)
+
+
+👉 This is your main tool for:
+
+updating files
+
+creating files
+
+
+
+---
+
+🔹 Repo Info (optional)
+
+mcp-hsbc-github-get-repository
+
+
+
+---
+
+🔁 Execution Flow Inside Agent
+
+1. Get default branch
+2. Create feature/bugfix branch
+3. For each file:
+     → fetch content
+     → modify content
+     → upsert file
+4. Commit changes
+5. Push branch
+
+
+---
+
+📤 Output
+
+{
+  "branch_name": "feature/ABC-123",
+  "files_updated": ["auth.py"],
+  "status": "success"
+}
+
+
+---
+
+⚠️ Edge Case Handling (IMPORTANT)
+
+Add this logic:
+
+If file not found:
+
+return error:
+
+
+{
+  "status": "failed",
+  "reason": "file not found"
+}
+
+
+---
+
+If plan is empty:
+
+do nothing, return safe exit
+
+
+
+---
+
+🔥 Best Practice (this will impress reviewers)
+
+Add this behavior:
+
+👉 Before modifying:
+
+always fetch latest file version
+
+avoid overwriting blindly
+
+
+
+---
+
+🧠 How This Fits in Your Flow
+
+plan_agent
+   ↓
+implement_agent  ← (YOU ARE HERE)
+   ↓
+create_pr_agent
+
+
+---
+
+🎯 What You Say in Review
+
+> “The implementation agent strictly follows the execution plan, modifies only targeted files, and ensures safe, minimal changes before pushing a feature branch.”
+
+
+
+
+---
+
+🚀 Next Step
+
+I can now help you with:
+
+✅ create_pr_agent (next logical step)
+
+✅ pr_review_agent (very important for loop)
+
+✅ Switch loop logic (to complete workflow)
+
+
+Just say 👍
