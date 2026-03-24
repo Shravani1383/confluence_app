@@ -1,0 +1,204 @@
+Great — we’ll jump to create_pr_agent (final step in your flow) 🚀
+This agent is responsible for turning your work into a GitHub PR.
+
+
+---
+
+🧩 STEP — create_pr_agent
+
+This agent takes:
+
+plan_output
+
+implement_output
+
+
+…and creates a clean PR.
+
+
+---
+
+🎯 ✅ Agent Goal (Responsibility)
+
+Paste this into Description / Goal:
+
+Create a pull request in the repository based on the implementation results.
+
+The agent should:
+- Prepare branch and commit details
+- Generate a meaningful PR title and description
+- Include summary of changes and testing results
+- Link Jira ticket if available
+
+
+---
+
+📜 ✅ Instructions (System Prompt)
+
+You are a GitHub PR Creation Agent in an automated SDLC workflow.
+
+Input will contain:
+- Implementation plan (plan_output)
+- Code changes and results (implement_output)
+
+Your responsibilities:
+
+1. Generate a PR title (clear and concise)
+2. Generate a PR description including:
+   - Summary of changes
+   - Files modified/created
+   - Testing results (must include "maven test pass" if present)
+   - Reference Jira ticket if available
+
+3. Prepare branch name:
+   - Format: feature/<short-description>
+
+4. Ensure PR is clean, professional, and developer-friendly
+
+Output MUST be in JSON format:
+
+{
+  "branch_name": "...",
+  "pr_title": "...",
+  "pr_description": "...",
+  "commit_message": "..."
+}
+
+Do NOT include any extra explanation outside JSON.
+
+
+---
+
+🔌 ✅ MCP Tools (IMPORTANT)
+
+You MUST attach GitHub tools here 👇
+
+Typical MCP tools:
+
+create_branch
+
+commit_changes
+
+create_pull_request
+
+
+If using generic Git MCP:
+
+github.create_branch
+github.commit_files
+github.create_pull_request
+
+
+---
+
+🔗 ✅ Input Configuration
+
+${plan_output}, ${implement_output}
+
+
+---
+
+📤 ✅ Output Configuration
+
+Variable Name: pr_output  
+Expression: ${output.choices[0].message.content}
+
+
+---
+
+⚙️ ✅ Configuration Tab
+
+Agent Name: create_pr_agent
+
+Timeout: 5000
+
+
+Description:
+
+Creates a GitHub pull request from implementation output including branch, commits, and PR details.
+
+
+---
+
+🧠 🔥 HOW THIS FITS YOUR FLOW
+
+After loop ends:
+
+plan_agent → implement_agent → (loop passes) → create_pr_agent
+
+This agent:
+
+takes final working code
+
+pushes branch
+
+creates PR
+
+
+
+---
+
+⚠️ IMPORTANT (COMMON MISTAKE)
+
+Make sure:
+
+✅ implement_agent output includes:
+
+files changed
+
+commit-ready code
+
+test result ("maven test pass")
+
+
+Otherwise PR agent won’t have enough context.
+
+
+---
+
+💡 PRO TIP
+
+You can enhance PR quality by forcing structure:
+
+Add inside instructions:
+
+PR description should follow:
+
+## Summary
+...
+
+## Changes
+...
+
+## Testing
+...
+
+## Jira
+...
+
+
+---
+
+✅ DONE
+
+Your PR agent is now production-ready.
+
+
+---
+
+🔜 NEXT STEP
+
+We still need to configure the most critical part:
+
+👉 implement_agent (coding + test + loop driver)
+
+This is what drives your Switch(loop) logic.
+
+
+---
+
+Say:
+
+👉 “next implement agent”
+
+and I’ll give you a powerful, loop-aware implementation agent config 🔥
