@@ -1,0 +1,373 @@
+Jira Ticket + Repo Input
+        ↓
+Jira Intake
+        ↓
+Repository Analysis
+        ↓
+Planning
+        ↓
+Branch Creation
+        ↓
+Code Implementation
+        ↓
+Commit & Push
+        ↓
+PR Creation
+        ↓
+PR Review & Merge / Feedback Loop
+
+
+Perfect — this is a much sharper and cleaner direction.
+You’ve essentially moved from infra-heavy agents → intelligent repo-aware automation, which is exactly how you differentiate.
+
+Let’s redesign this in a Jacqueline-style structured plan, but with your lean + intelligent workflow 👇
+
+
+---
+
+📌 Use Case: Jira to Code (Lightweight Intelligent Workflow)
+
+aicoe-jira-to-code-agent
+
+Goal
+
+Take a Jira ticket and repository as input, analyze the codebase, implement the required change, and raise a pull request — without explicit sandbox setup.
+
+
+---
+
+🔁 End-to-End Workflow
+
+Jira Ticket + Repo Input
+        ↓
+Jira Intake
+        ↓
+Repository Analysis
+        ↓
+Planning
+        ↓
+Branch Creation
+        ↓
+Code Implementation
+        ↓
+Commit & Push
+        ↓
+PR Creation
+        ↓
+PR Review & Merge / Feedback Loop
+
+
+---
+
+🧩 Agent Breakdown
+
+1. aicoe-jira-intake-agent
+
+Tasks:
+
+1. Accept:
+
+Jira ticket ID
+
+repository URL
+
+
+
+2. Fetch ticket details:
+
+description
+
+acceptance criteria
+
+type (bug / feature)
+
+
+
+3. Normalize input for processing
+
+
+
+
+---
+
+2. aicoe-repo-analysis-agent ⭐ (New & Important)
+
+Tasks:
+
+1. Read repository structure
+
+
+2. Identify:
+
+relevant modules/files
+
+coding patterns
+
+
+
+3. Understand context:
+
+where change should be made
+
+
+
+
+👉 This replaces the need for sandbox thinking
+
+
+---
+
+3. aicoe-planning-agent
+
+Tasks:
+
+1. Combine:
+
+Jira requirement
+
+repo insights
+
+
+
+2. Generate plan:
+
+files to modify
+
+steps to implement
+
+expected changes
+
+
+
+
+
+---
+
+4. aicoe-branch-management-agent
+
+Tasks:
+
+1. Create new branch:
+
+feature/<ticket-id>
+bugfix/<ticket-id>
+
+
+2. Ensure branch is based on latest main
+
+
+
+
+---
+
+5. aicoe-code-implementation-agent
+
+Tasks:
+
+1. Implement changes as per plan
+
+
+2. Follow repo conventions
+
+
+3. Keep changes minimal and scoped
+
+
+
+
+---
+
+6. aicoe-commit-agent
+
+Tasks:
+
+1. Commit changes with meaningful message
+
+
+2. Push branch to remote
+
+
+
+
+---
+
+7. aicoe-pr-agent
+
+Tasks:
+
+1. Create Pull Request
+
+
+2. Generate:
+
+title (from Jira)
+
+description:
+
+summary
+
+changes
+
+linked ticket
+
+
+
+
+
+
+---
+
+🔄 Post-PR Flow (This is what you asked — very important)
+
+8. aicoe-pr-review-agent
+
+Tasks:
+
+🔍 Review Phase
+
+1. Analyze PR:
+
+code quality
+
+correctness vs Jira criteria
+
+
+
+2. Possible outcomes:
+
+
+
+
+---
+
+✅ Case 1: PR is good
+
+Approve PR
+
+Merge into main
+
+
+
+---
+
+⚠️ Case 2: Minor issues
+
+Add comments on PR
+
+Suggest fixes
+
+
+👉 Loop back:
+
+PR Comments
+    ↓
+Code Implementation Agent
+    ↓
+Update Commit
+    ↓
+PR Updated
+
+
+---
+
+❌ Case 3: Major issues
+
+Reject PR
+
+Provide detailed feedback
+
+
+
+---
+
+🔁 Feedback Loop (Key Differentiator)
+
+PR Raised
+    ↓
+Review Agent
+    ↓
+[Issues Found]
+    ↓
+Auto-fix / Re-implement
+    ↓
+Update PR
+    ↓
+Re-review
+
+👉 This makes your system:
+
+Iterative
+
+Self-correcting
+
+
+
+---
+
+📦 Input Contract
+
+{
+  "jira_ticket_id": "ABC-123",
+  "repo_url": "https://github.com/org/repo",
+  "task_type": "bug | feature"
+}
+
+
+---
+
+📤 Final Output
+
+✅ Feature/bug branch created
+
+✅ Code changes committed
+
+✅ PR raised
+
+✅ PR reviewed and:
+
+merged OR
+
+commented + updated
+
+
+
+
+---
+
+🚀 Why This Version is Strong
+
+Compared to Jacqueline:
+
+❌ No heavy sandbox dependency
+
+✅ Repo-aware intelligence
+
+✅ Planning before coding
+
+✅ Feedback loop after PR
+
+
+
+---
+
+🎯 How to Pitch This
+
+> “This workflow focuses on intelligent repository analysis and planning before implementation. It removes infrastructure overhead and introduces a feedback loop after PR creation, making the system iterative and more efficient.”
+
+
+
+
+---
+
+⚡ If you want to go one level better
+
+I can:
+
+Turn this into a visual diagram (exactly like your screenshots)
+
+Add GitHub API + Jira API integration details
+
+Or convert into AgentHub-ready prompts/configs
+
+
+Just tell me 👍
