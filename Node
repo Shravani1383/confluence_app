@@ -1,0 +1,248 @@
+Great — this is exactly the level of clarity needed 👍
+From your screenshots, I can see a few important constraints from your Sandbox MCP setup:
+
+You must pass:
+
+image
+
+namespace
+
+optional pvc_name
+
+
+Files go into /shared (PVC mount)
+
+You should return sandbox_id in every step
+
+Commands are executed inside the container (likely /bin/sh)
+
+
+
+---
+
+🎯 Your Goal
+
+> Run a basic Node.js app with minimal UI inside the sandbox and test it
+
+
+
+We’ll design this as:
+
+create sandbox
+
+create Node app
+
+run it
+
+verify output
+
+
+
+---
+
+🧠 1. BEST System Prompt (Tailored to your setup)
+
+Use this (adapted to your Confluence guide):
+
+You are an AI agent that executes code inside a Sandbox MCP environment.
+
+ENVIRONMENT RULES:
+
+- Always create a sandbox before running commands
+- Use the following parameters when creating sandbox:
+  - image: a Node.js-compatible container (e.g. node:18)
+  - namespace: agenthub-tenant
+  - pvc_name: mcp-sandbox-pvc
+- All files must be created under /shared
+- Always return the sandbox_id in every response
+- Reuse the same sandbox unless instructed otherwise
+
+EXECUTION RULES:
+
+- Break tasks into steps:
+  1. Create sandbox
+  2. Create files in /shared
+  3. Install dependencies if needed
+  4. Run commands
+- Use simple shell commands
+- If something fails, check logs and retry
+
+OUTPUT FORMAT:
+
+- Show command output clearly
+- Always include sandbox_id
+
+SAFETY:
+
+- Do not run destructive commands
+- Keep processes simple and short-lived
+
+You are a Node.js execution assistant inside a sandbox.
+---
+
+👤 2. EXACT USER PROMPT (use this)
+
+This is optimized for your setup:
+
+Create a Node.js app in the sandbox:
+
+1. Create a file /shared/app.js with a simple HTTP server using Node.js
+2. The server should run on port 3000 and return "Hello from sandbox"
+3. Install any required dependencies
+4. Start the server
+5. Test it using curl and show the response
+
+Return the output and sandbox_id
+
+
+---
+
+⚙️ 3. What the Agent SHOULD do internally
+
+This is how your agent will execute (so you can debug if it fails):
+
+
+---
+
+Step 1 — Create sandbox
+
+{
+  "image": "node:18",
+  "namespace": "agenthub-tenant",
+  "pvc_name": "mcp-sandbox-pvc"
+}
+
+
+---
+
+Step 2 — Create app file
+
+Command:
+
+echo "const http = require('http');
+const server = http.createServer((req, res) => {
+  res.end('Hello from sandbox');
+});
+server.listen(3000);" > /shared/app.js
+
+
+---
+
+Step 3 — Run server
+
+node /shared/app.js &
+
+👉 & is important (non-blocking)
+
+
+---
+
+Step 4 — Test it
+
+curl localhost:3000
+
+
+---
+
+🧪 4. Expected Output
+
+Hello from sandbox
+sandbox_id: xyz123
+
+
+---
+
+⚠️ 5. Common Issues (from your setup)
+
+❌ Node not available
+
+Fix:
+
+Use image: node:18
+
+
+---
+
+❌ File not found
+
+Fix:
+
+Always use /shared/app.js
+
+
+---
+
+❌ Server hangs
+
+Fix:
+
+node app.js &
+
+
+---
+
+❌ curl fails
+
+Fix:
+
+sleep 2 && curl localhost:3000
+
+
+---
+
+🔥 6. BETTER VERSION (more reliable prompt)
+
+Use this if the first one is flaky:
+
+Execute the following in sandbox step by step:
+
+1. Create a sandbox using node:18 image
+2. Create file /shared/app.js with a simple Node HTTP server returning "Hello from sandbox"
+3. Run the server in background
+4. Wait for server to start
+5. Curl localhost:3000 and show output
+
+Ensure:
+- all files are in /shared
+- commands are executed step by step
+- return sandbox_id in final response
+
+
+---
+
+🚀 7. If You Want Next Level
+
+After this works, you can upgrade to:
+
+✅ Express app
+
+npm init -y
+npm install express
+
+
+---
+
+✅ UI (HTML page)
+
+Serve:
+
+<h1>Hello from Sandbox UI</h1>
+
+
+---
+
+✅ Multi-file apps
+
+
+---
+
+🧩 If it doesn’t work
+
+Paste:
+
+your agent response
+
+tool calls
+
+
+and I’ll debug exactly why it’s not triggering tools or failing execution.
