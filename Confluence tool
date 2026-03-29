@@ -1,0 +1,286 @@
+Got it — let’s turn your design into production-ready async code with:
+
+✅ Single tool (confluence_answer)
+
+✅ Async orchestration
+
+✅ Sync fetch (one URL at a time) 👈 enforced
+
+✅ Clean structure (easy to plug into your agent)
+
+✅ Basic ranking + chunking hooks
+
+
+
+---
+
+🏗️ Final Production-Ready Implementation
+
+📁 confluence_tool.py
+
+import re
+import asyncio
+from typing import List, Dict, Any
+
+# ---- External dependencies (plug your implementations) ----
+# These should already exist in your project
+from tools.confluence_search import confluence_search_pages   # async
+from tools.confluence_fetch import confluence_fetch_page      # SYNC (IMPORTANT)
+from integrations.llm_client import create_azure_openai_chat_client
+
+
+# ---- Config ----
+MAX_SEARCH_RESULTS = 30
+TOP_K = 3
+CHUNK_SIZE = 800  # tokens/approx chars
+
+
+# ---- Helpers ----
+
+def extract_urls(text: str) -> List[str]:
+    return re.findall(r'https?://\S+', text)
+
+
+def simple_rank(query: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Lightweight ranking (replace with embeddings later)
+    """
+    query_lower = query.lower()
+
+    def score(item):
+        text = (item.get("title", "") + " " + item.get("snippet", "")).lower()
+        return sum(word in text for word in query_lower.split())
+
+    return sorted(results, key=score, reverse=True)
+
+
+def chunk_text(text: str, size: int = CHUNK_SIZE) -> List[str]:
+    return [text[i:i + size] for i in range(0, len(text), size)]
+
+
+def fetch_pages_sync(urls: List[str]) -> List[Dict[str, str]]:
+    """
+    STRICTLY synchronous fetching (one URL at a time)
+    """
+    pages = []
+
+    for url in urls:
+        try:
+            content = confluence_fetch_page(url)  # SYNC call
+            if not content:
+                continue
+
+            chunks = chunk_text(content)
+
+            pages.append({
+                "url": url,
+                "content": content,
+                "chunks": chunks[:5],  # limit chunks to control tokens
+            })
+
+        except Exception as e:
+            print(f"[WARN] Failed to fetch {url}: {e}")
+
+    return pages
+
+
+async def generate_answer(query: str, pages: List[Dict[str, Any]]) -> str:
+    """
+    Final LLM synthesis
+    """
+    model_client = create_azure_openai_chat_client()
+
+    context_parts = []
+    for p in pages:
+        for chunk in p["chunks"]:
+            context_parts.append(f"[{p['url']}]\n{chunk}")
+
+    context = "\n\n".join(context_parts[:10])  # cap context
+
+    prompt = f"""
+You are a Confluence assistant.
+
+Answer the user question using the provided context.
+- Be concise
+- Use bullet points if helpful
+- Cite URLs where relevant
+
+Question:
+{query}
+
+Context:
+{context}
+"""
+
+    response = await model_client.create(messages=[{"role": "user", "content": prompt}])
+
+    return response.content if hasattr(response, "content") else str(response)
+
+
+# ---- Main Tool ----
+
+async def confluence_answer(query: str) -> str:
+    """
+    Unified Confluence QA tool:
+    - Handles query-only
+    - Handles query + URL
+    """
+
+    urls_in_query = extract_urls(query)
+
+    pages: List[Dict[str, Any]] = []
+
+    try:
+        # ---- CASE B: User provided URL ----
+        if urls_in_query:
+            # 1. Fetch user-provided URLs (sync)
+            pages.extend(fetch_pages_sync(urls_in_query))
+
+            # 2. Optional enrichment via search
+            search_results = await confluence_search_pages(query, limit=MAX_SEARCH_RESULTS)
+
+            ranked = simple_rank(query, search_results)
+            extra_urls = [r["url"] for r in ranked[:2]]
+
+            pages.extend(fetch_pages_sync(extra_urls))
+
+        # ---- CASE A: Query only ----
+        else:
+            search_results = await confluence_search_pages(query, limit=MAX_SEARCH_RESULTS)
+
+            if not search_results:
+                return "No relevant Confluence pages found."
+
+            ranked = simple_rank(query, search_results)
+            top_urls = [r["url"] for r in ranked[:TOP_K]]
+
+            pages.extend(fetch_pages_sync(top_urls))
+
+        if not pages:
+            return "Unable to retrieve relevant Confluence content."
+
+        # ---- Final Answer ----
+        return await generate_answer(query, pages)
+
+    except Exception as e:
+        return f"Error while processing request: {str(e)}"
+
+
+---
+
+🔌 Plug Into Your Agent
+
+Replace your tools list:
+
+from tools.confluence_tool import confluence_answer
+from autogen_core.tools import FunctionTool
+
+tools = [
+    FunctionTool(
+        confluence_answer,
+        name="confluence_answer",
+        description="Answer questions using Confluence. Handles both search queries and direct URLs."
+    )
+]
+
+
+---
+
+⚙️ Why This Is Production-Ready
+
+✅ Async where it matters
+
+Search → async
+
+LLM → async
+
+
+✅ Sync where required
+
+confluence_fetch_page stays strictly sequential
+
+Prevents rate limits / API issues / session conflicts
+
+
+
+---
+
+🚀 Upgrade Hooks (Easy Next Steps)
+
+1. Replace ranking with embeddings
+
+Swap:
+
+simple_rank(...)
+
+with cosine similarity
+
+
+---
+
+2. Parallel search providers
+
+You can later do:
+
+await asyncio.gather(search1(), search2())
+
+
+---
+
+3. Better chunk selection
+
+Instead of:
+
+chunks[:5]
+
+→ rank chunks per query
+
+
+---
+
+4. Caching (BIG win)
+
+Add:
+
+@lru_cache or Redis
+
+for:
+
+fetch_page
+
+search results
+
+
+
+---
+
+⚠️ Important Design Note
+
+Even though your tool is async: 👉 fetch is intentionally blocking
+
+This ensures:
+
+No overload on Confluence
+
+Predictable behavior
+
+Easier debugging
+
+
+
+---
+
+👍 If You Want Next
+
+I can help you:
+
+Add embedding-based ranking (production-grade)
+
+Add streaming responses
+
+Add citations with exact paragraph matching
+
+Turn this into a multi-agent system (planner + retriever)
+
+
+Just tell me 👍
