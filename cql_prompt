@@ -69,7 +69,129 @@ CORE RULES
 7. ORDER & STRUCTURE
 - Maintain clause order.
 - Create separate queries only for distinct intents.
+Ahh — that’s a classic anchor propagation failure. Your system understands splitting, but it’s dropping the subject in later clauses (very common with “its”, “their”, etc.).
 
+
+---
+
+🎯 Root Cause
+
+Input:
+
+> features of chatGPT and its software development cycle
+
+
+
+Model behavior:
+
+Clause 1 → “chatgpt features” ✅
+
+Clause 2 → “software development life cycle” ❌ (lost anchor)
+
+
+👉 Why?
+Because “its” isn’t being forcefully resolved back to “chatgpt”.
+
+
+---
+
+✅ Fix: Strengthen Pronoun + Anchor Enforcement
+
+You need a hard, non-optional rule that forces anchor repetition.
+
+Add this to your prompt (IMPORTANT: keep wording strict):
+
+9. STRICT ANCHOR REPETITION (CRITICAL)
+- Every query MUST explicitly include the subject (anchor) in its keywords.
+- Do NOT omit the subject, even if it appears implied (e.g., via "its", "their", etc.).
+- Replace pronouns with the full subject in every query.
+
+Bad:
+"software development life cycle"
+
+Good:
+"chatgpt software development life cycle"
+
+
+---
+
+🔧 Also strengthen your Pronoun Rule
+
+Replace your current pronoun rule with this stricter version:
+
+5. PRONOUN RESOLUTION (STRICT)
+- Resolve all pronouns ("it", "its", "their", "that") to the explicit subject.
+- NEVER output keywords containing pronouns.
+- ALWAYS restate the full subject in every keyword phrase.
+
+
+---
+
+💡 Optional (Highly Effective)
+
+Add a final validation rule (this dramatically improves reliability):
+
+10. SELF-CHECK BEFORE OUTPUT
+- Ensure every keyword phrase contains the subject.
+- Ensure no query is missing the anchor.
+- If any query is missing it, fix it before returning output.
+
+
+---
+
+🧠 Why this works
+
+LLMs tend to:
+
+Drop repeated tokens to sound “natural”
+
+Treat second clauses as implicit context
+
+
+These rules force the model to: ✔ Be redundant on purpose
+✔ Treat each query as standalone
+✔ Avoid downstream CQL errors
+
+
+---
+
+✅ After Fix — Your Example
+
+Input:
+
+> features of chatGPT and its software development cycle
+
+
+
+Output (correct):
+
+{
+  "execution_mode": "multi",
+  "queries": [
+    {
+      "keywords": ["chatgpt features"],
+      ...
+    },
+    {
+      "keywords": ["chatgpt software development life cycle"],
+      ...
+    }
+  ]
+}
+
+
+---
+
+🚀 If you want next level robustness
+
+I can give you:
+
+A validator function (Python) to enforce this post-LLM
+
+Or a few-shot training set that eliminates this issue entirely
+
+
+Just tell me 👍
 ------------------------------
 OUTPUT REQUIREMENTS
 ------------------------------
@@ -77,4 +199,8 @@ OUTPUT REQUIREMENTS
 - Include all fields exactly as defined.
 - No missing keys.
 - No additional keys.
+
+
+
+
 """
