@@ -72,6 +72,11 @@ CORE RULES
 Ahh — that’s a classic anchor propagation failure. Your system understands splitting, but it’s dropping the subject in later clauses (very common with “its”, “their”, etc.).
 
 
+8. FACET SPLITTING (CRITICAL)
+- If a query contains multiple aspects of the same subject, ALWAYS split into separate queries.
+- Each query must contain exactly ONE aspect.
+- EVERY query MUST explicitly include the full subject (anchor).
+- NEVER omit the subject, even if it is implied.
 ---
 
 🎯 Root Cause
