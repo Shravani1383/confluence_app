@@ -1,0 +1,326 @@
+Great — now we’ll upgrade your pipeline to production-grade retrieval with:
+
+✅ Embedding-based ranking (documents + chunks)
+
+✅ Strong relevance scoring
+
+✅ URL citations tied to exact content
+
+✅ Still respecting sync fetch (one URL at a time)
+
+
+
+---
+
+🧠 What We’re Adding
+
+Before
+
+Keyword ranking (weak)
+
+Dump chunks → LLM
+
+
+After
+
+Embedding ranking (accurate)
+
+Chunk-level retrieval (RAG-style)
+
+Precise citations
+
+
+
+---
+
+🏗️ Updated Architecture
+
+Query
+  ↓
+Embed query
+  ↓
+Search (top 30)
+  ↓
+Embed + rank results
+  ↓
+Top URLs (3)
+  ↓
+Fetch (SYNC, one-by-one)
+  ↓
+Chunk pages
+  ↓
+Embed chunks
+  ↓
+Top chunks (semantic match)
+  ↓
+LLM (with citations)
+
+
+---
+
+📁 Production Code (Upgraded)
+
+🔹 Add Embedding Support
+
+from openai import AsyncOpenAI
+import numpy as np
+
+embedding_client = AsyncOpenAI()
+
+EMBED_MODEL = "text-embedding-3-large"
+
+
+---
+
+🔹 Embedding Utilities
+
+async def embed_texts(texts: List[str]) -> List[List[float]]:
+    response = await embedding_client.embeddings.create(
+        model=EMBED_MODEL,
+        input=texts
+    )
+    return [d.embedding for d in response.data]
+
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+---
+
+🔹 Rank Search Results (Embedding-Based)
+
+async def rank_results(query: str, results: List[Dict[str, Any]]) -> List[Dict]:
+    texts = [
+        f"{r.get('title', '')} {r.get('snippet', '')}"
+        for r in results
+    ]
+
+    query_emb = (await embed_texts([query]))[0]
+    doc_embs = await embed_texts(texts)
+
+    scored = []
+    for r, emb in zip(results, doc_embs):
+        score = cosine_similarity(query_emb, emb)
+        scored.append({**r, "score": score})
+
+    return sorted(scored, key=lambda x: x["score"], reverse=True)
+
+
+---
+
+🔹 Chunk-Level Ranking (CRITICAL)
+
+async def select_relevant_chunks(query: str, pages: List[Dict]) -> List[Dict]:
+    query_emb = (await embed_texts([query]))[0]
+
+    all_chunks = []
+    chunk_meta = []
+
+    for p in pages:
+        for chunk in p["chunks"]:
+            all_chunks.append(chunk)
+            chunk_meta.append({
+                "url": p["url"],
+                "text": chunk
+            })
+
+    chunk_embs = await embed_texts(all_chunks)
+
+    scored_chunks = []
+    for meta, emb in zip(chunk_meta, chunk_embs):
+        score = cosine_similarity(query_emb, emb)
+        scored_chunks.append({
+            "url": meta["url"],
+            "text": meta["text"],
+            "score": score
+        })
+
+    # Top relevant chunks
+    return sorted(scored_chunks, key=lambda x: x["score"], reverse=True)[:8]
+
+
+---
+
+🔹 Improved Fetch (unchanged constraint respected)
+
+def fetch_pages_sync(urls: List[str]) -> List[Dict]:
+    pages = []
+
+    for url in urls:
+        try:
+            content = confluence_fetch_page(url)  # SYNC ONLY
+
+            if not content:
+                continue
+
+            chunks = chunk_text(content)
+
+            pages.append({
+                "url": url,
+                "chunks": chunks
+            })
+
+        except Exception as e:
+            print(f"[WARN] Failed {url}: {e}")
+
+    return pages
+
+
+---
+
+🔹 Citation-Aware Answer Generation
+
+async def generate_answer(query: str, chunks: List[Dict]) -> str:
+    model_client = create_azure_openai_chat_client()
+
+    context = "\n\n".join([
+        f"[SOURCE: {c['url']}]\n{c['text']}"
+        for c in chunks
+    ])
+
+    prompt = f"""
+You are a Confluence assistant.
+
+Answer the question using ONLY the provided context.
+
+STRICT RULES:
+- Always cite sources using [SOURCE: url]
+- If multiple sources support a point, cite all
+- Do NOT hallucinate
+- If unsure, say "Not found in provided sources"
+
+Question:
+{query}
+
+Context:
+{context}
+"""
+
+    response = await model_client.create(
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    return response.content if hasattr(response, "content") else str(response)
+
+
+---
+
+🚀 Final Unified Tool
+
+async def confluence_answer(query: str) -> str:
+    urls_in_query = extract_urls(query)
+
+    try:
+        # ---- CASE B: URL provided ----
+        if urls_in_query:
+            pages = fetch_pages_sync(urls_in_query)
+
+            search_results = await confluence_search_pages(query, limit=30)
+            ranked = await rank_results(query, search_results)
+
+            extra_urls = [r["url"] for r in ranked[:2]]
+            pages.extend(fetch_pages_sync(extra_urls))
+
+        # ---- CASE A: Query only ----
+        else:
+            search_results = await confluence_search_pages(query, limit=30)
+
+            if not search_results:
+                return "No relevant Confluence pages found."
+
+            ranked = await rank_results(query, search_results)
+            top_urls = [r["url"] for r in ranked[:3]]
+
+            pages = fetch_pages_sync(top_urls)
+
+        if not pages:
+            return "No content retrieved."
+
+        # ---- Chunk-level semantic selection ----
+        top_chunks = await select_relevant_chunks(query, pages)
+
+        # ---- Final answer with citations ----
+        return await generate_answer(query, top_chunks)
+
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+
+---
+
+🧠 What You Gained
+
+🔥 Huge Improvements
+
+1. True semantic ranking
+
+Finds relevant docs even without keyword match
+
+
+2. Chunk-level precision
+
+No more dumping entire pages
+
+Only most relevant sections used
+
+
+3. Real citations
+
+Example output:
+
+Deployment pipeline includes CI validation and artifact storage [SOURCE: https://...].
+
+Rollback is handled via version tagging [SOURCE: https://...].
+
+
+---
+
+⚡ Performance Tips (Important)
+
+Cache embeddings
+
+# Redis / in-memory
+cache_key = hash(text)
+
+Batch embeddings
+
+Already done — keep it that way
+
+Limit chunk explosion
+
+max_chunks_per_page = 20
+
+
+---
+
+🚨 Common Pitfalls (Avoid These)
+
+❌ Embedding entire pages → too slow
+
+❌ Not batching embeddings → expensive
+
+❌ Fetching too many URLs → token blowup
+
+❌ No chunk ranking → noisy answers
+
+
+
+---
+
+👍 If You Want Next Level
+
+I can help you add:
+
+🔁 Streaming answers (token-by-token)
+
+🧩 Hybrid search (BM25 + embeddings)
+
+🧠 Memory-aware conversations
+
+📊 Evaluation metrics (precision@k, etc.)
+
+⚡ Vector DB (FAISS / Azure AI Search)
+
+
+Just tell me 👍
