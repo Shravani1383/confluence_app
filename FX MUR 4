@@ -1,0 +1,140 @@
+Smart approach. Here's the prompt to pass your screenshot to a vision model (GPT-4o, Gemini, or Claude) to get a structured text description your agent can consume:
+
+---
+
+```
+You are a UI layout analyst. I will give you a screenshot of a webpage section.
+Your job is to describe it in structured JSON that a front-end AI agent will use 
+to reconstruct the UI in React/TSX. Be precise and technical — this output 
+replaces the screenshot entirely, so nothing visual should be left ambiguous.
+
+Analyze the screenshot and return ONLY a JSON object with this exact structure 
+(no markdown, no explanation, just raw JSON):
+
+{
+  "section": "<navbar|hero|cards|form|footer|sidebar|modal|other>",
+  "layout": {
+    "type": "<flex|grid|absolute|stack>",
+    "direction": "<row|column>",
+    "columns": <number or null>,
+    "gap": "<estimated gap in px>",
+    "alignment": "<start|center|end|space-between|space-around>",
+    "verticalAlignment": "<start|center|end>",
+    "padding": "<estimated padding e.g. '16px 24px'>",
+    "maxWidth": "<estimated max width or 'full'>",
+    "isSticky": <true|false>,
+    "isFullWidth": <true|false>
+  },
+  "background": {
+    "color": "<hex or rgba>",
+    "hasImage": <true|false>,
+    "hasGradient": <true|false>,
+    "gradientDescription": "<describe if present, else null>",
+    "opacity": <0-1>
+  },
+  "elements": [
+    {
+      "id": "<short unique name e.g. 'logo', 'nav-links', 'cta-button'>",
+      "type": "<text|image|button|input|icon|divider|badge|card|list|link|avatar>",
+      "position": "<left|center|right|absolute — relative to parent>",
+      "content": "<actual text content if visible, else null>",
+      "style": {
+        "fontSize": "<estimated px>",
+        "fontWeight": "<400|500|600|700>",
+        "color": "<hex or rgba>",
+        "backgroundColor": "<hex or rgba or null>",
+        "borderRadius": "<px or null>",
+        "border": "<describe or null>",
+        "padding": "<px values or null>",
+        "width": "<px or % or 'auto'>",
+        "height": "<px or 'auto'>",
+        "shadow": "<describe or null>",
+        "opacity": <0-1>
+      },
+      "states": {
+        "hasHoverEffect": <true|false>,
+        "isActive": <true|false>,
+        "isDisabled": <true|false>
+      },
+      "children": []
+    }
+  ],
+  "responsiveness": {
+    "observedBreakpoint": "<mobile|tablet|desktop>",
+    "notes": "<any responsive behavior you can infer>"
+  },
+  "spacing": {
+    "betweenElements": "<estimated px>",
+    "sectionPaddingTop": "<px>",
+    "sectionPaddingBottom": "<px>"
+  },
+  "typography": {
+    "dominantFont": "<font name if identifiable, else null>",
+    "headingSize": "<px or null>",
+    "bodySize": "<px or null>",
+    "lineHeight": "<estimated or null>"
+  },
+  "notes": "<anything unusual, overlapping elements, animations, z-index stacking, patterns that don't fit the schema>"
+}
+
+Rules:
+- Estimate pixel values by comparing elements to each other — e.g. if the font 
+  looks like standard body text assume 16px, headings 24-32px etc.
+- For colors, give your best hex estimate from what you see. 
+  Prefer exact over vague (say '#1E293B' not 'dark navy').
+- Nest children inside parent elements using the "children" array.
+- If a section has repeating items (cards, list rows, nav links), describe ONE 
+  instance fully and add "repeats": <count> to that element.
+- Do not describe anything outside the screenshot boundary.
+- Do not add commentary outside the JSON object.
+```
+
+---
+
+**How to use this in your pipeline:**
+
+```
+screenshot  ──►  vision model + above prompt  ──►  layout-description.json
+                                                            │
+                               ┌────────────────────────────┘
+                               ▼
+              agent receives:  ui-spec.json  +  layout-description.json
+                               │
+                               ▼
+                        builds React component
+```
+
+Your agent prompt then becomes:
+
+```
+You are a React/TSX UI builder.
+
+You have two inputs:
+
+1. ui-spec.json — contains exact design tokens (colors, fonts, spacing, 
+   border radius, shadows) extracted programmatically from the target site.
+
+2. layout-description.json — contains a structured visual description of 
+   one UI section, produced by analyzing a screenshot.
+
+Your job:
+- Build a single React TSX component for the section described in 
+  layout-description.json
+- Use ONLY token values from ui-spec.json for all colors, font sizes, 
+  spacing, and border radius — never invent design values
+- If layout-description.json gives a color that conflicts with ui-spec.json, 
+  prefer ui-spec.json (it is ground truth from computed styles)
+- Use Tailwind CSS with the custom token classes already configured
+- Make the component match the layout structure exactly: respect column counts,
+  flex direction, gap, padding, and element positions
+- For repeating elements (cards, list rows) use .map() with sample data
+- Export the component as default
+
+ui-spec.json:
+<paste here>
+
+layout-description.json:
+<paste here>
+```
+
+This keeps your agent fully text-based while the vision model handles all the visual interpretation — clean separation of concerns.
