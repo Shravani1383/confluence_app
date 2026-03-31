@@ -1,0 +1,339 @@
+Perfect — this is the right way to start: keep it minimal, prove the concept, then scale.
+
+You want:
+
+✅ Minimal repo (no noise like node_modules, lockfiles)
+
+✅ Simple input (UI spec + layout)
+
+✅ One agent → generates React + TypeScript code
+
+✅ No over-engineering (yet)
+
+
+Let’s do exactly that.
+
+
+---
+
+🧱 PART 1 — Minimal Starter Repo (What You Should Push)
+
+You only need a clean skeleton, not a full app.
+
+
+---
+
+📁 Final Minimal Structure
+
+repo/
+├── src/
+│   ├── App.tsx
+│   ├── main.tsx
+│   └── components/   (empty)
+├── index.html
+├── package.json
+├── tsconfig.json
+├── README.md
+└── .gitignore
+
+
+---
+
+📄 1. package.json (KEEP IT LIGHT)
+
+{
+  "name": "ui-agent-base",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@hsbc/evolve-base-assets": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vite": "^5.0.0",
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0"
+  }
+}
+
+👉 No lockfile needed initially.
+
+
+---
+
+📄 2. tsconfig.json
+
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "jsx": "react-jsx",
+    "strict": true,
+    "moduleResolution": "Node",
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}
+
+
+---
+
+📄 3. index.html
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>UI Agent</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+
+---
+
+📄 4. src/main.tsx
+
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+
+---
+
+📄 5. src/App.tsx (IMPORTANT: this is the entry your agent will modify)
+
+const App = () => {
+  return <div>Initial App</div>;
+};
+
+export default App;
+
+
+---
+
+📄 6. .gitignore
+
+node_modules
+dist
+.env
+
+
+---
+
+📄 7. README.md
+
+# UI Agent Base Repo
+
+This repo is used as a base for generating UI via an AI agent.
+
+
+---
+
+✅ Why This Setup Works
+
+Clean entry point (App.tsx)
+
+No noise
+
+Agent can:
+
+create components
+
+modify App.tsx
+
+add files inside /components
+
+
+
+
+---
+
+🧠 PART 2 — FIRST VERSION OF YOUR AGENT PROMPT
+
+You said:
+
+> Forget structure, just see if it can generate UI
+
+
+
+So we’ll keep prompt simple but strongly constrained
+
+
+---
+
+🧾 Your Agent Prompt (v1 — SIMPLE & POWERFUL)
+
+You are a senior frontend engineer.
+
+Your task is to generate a React application using TypeScript based on the provided UI specifications and layout description.
+
+You are given:
+1. A base repository with a simple React + TypeScript setup
+2. UI specifications (design, layout, components)
+3. HSBC design system (@hsbc/evolve-base-assets)
+
+Your responsibilities:
+
+1. Modify and extend the existing codebase:
+   - Update App.tsx to render the UI
+   - Create reusable components inside /src/components
+   - Keep code modular and readable
+
+2. Follow these strict rules:
+   - Use TypeScript
+   - Use functional React components only
+   - Use meaningful variable and function names
+   - Do not use single-letter variables
+   - Prefer semantic and readable code (no JS tricks)
+   - Avoid mutation; use immutable patterns
+   - Use map/filter instead of loops where appropriate
+   - Do not use boolean flag arguments
+   - Keep components small and reusable
+
+3. Styling:
+   - Use design tokens if provided
+   - Avoid hardcoding values where possible
+
+4. HSBC Design System:
+   - Use components from @hsbc/evolve-base-assets where applicable
+
+5. Output format:
+   - Return complete code for:
+     - App.tsx
+     - Any new components created
+   - Clearly separate files using comments like:
+
+     // File: src/components/Header.tsx
+
+6. Do NOT include:
+   - node_modules
+   - package-lock.json
+   - build output
+
+Goal:
+Generate clean, production-quality UI code that matches the provided layout as closely as possible.
+
+
+---
+
+🧩 PART 3 — Example Input You Give to Agent
+
+Keep it simple initially:
+
+
+---
+
+🧾 Example UI Spec Input
+
+Build a dashboard page with:
+
+- A header with title "Dashboard"
+- A grid of 3 cards
+- Each card has:
+  - title
+  - description
+  - primary button
+
+Layout:
+Header on top
+Below it a 3-column grid of cards
+
+
+---
+
+🧪 Expected Output (Agent Should Produce)
+
+App.tsx
+
+Header.tsx
+
+Card.tsx
+
+maybe CardGrid.tsx
+
+
+
+---
+
+🔥 KEY STRATEGY (IMPORTANT)
+
+Right now:
+
+👉 You are testing capability, not perfection
+
+So:
+
+❌ Don’t enforce full architecture yet
+
+❌ Don’t add ESLint automation yet
+
+❌ Don’t split into multiple agents yet
+
+
+
+---
+
+🚀 NEXT STEP (After This Works)
+
+Once this basic flow works:
+
+We will upgrade to:
+
+1. ✅ Structured JSON input
+
+
+2. ✅ Multi-agent system
+
+
+3. ✅ Code refinement layer
+
+
+4. ✅ GitHub PR automation
+
+
+
+
+---
+
+💡 Final Advice
+
+Start with:
+
+👉 “Can it generate correct UI structure?”
+
+NOT:
+
+👉 “Can it follow 50 rules perfectly?”
+
+
+---
+
+If you want next, I can:
+
+Evaluate your agent output
+
+Improve prompt iteratively
+
+Add automatic refinement step
+
+Help you plug this into GitHub API
+
+
+Just show me your first output 👍
