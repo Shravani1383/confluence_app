@@ -1,264 +1,176 @@
-Great — this is the most important piece of your system. The difference between a “meh” output and a DOMscribe-level result is 90% prompt design.
+Great question! Here's the right approach — the key insight is to **extract design tokens programmatically using browser DevTools**, not by eyeballing or asking AI to guess.
 
-I’ll give you production-grade prompts for GPT-4o that are actually usable 👇
+Here's the complete strategy:
 
+**The approach: run a script in DevTools Console**
 
----
+You paste a JavaScript snippet into the browser console while on the target website. It crawls the DOM and computes styles programmatically — extracting exact colors, fonts, spacing, border radii, shadows, etc. This gives you a machine-accurate JSON, not an approximation.Here's the complete script you paste into **DevTools → Console**:
 
-🧠 Overall Strategy (Don’t skip this)
+```javascript
+(function extractDesignTokens() {
+  const all = Array.from(document.querySelectorAll('*'));
+  const freq = (arr) => {
+    const map = {};
+    arr.forEach(v => { if (v) map[v] = (map[v] || 0) + 1; });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 20).map(e => e[0]);
+  };
 
-You should NOT use a single prompt.
+  // --- Colors ---
+  const bgColors = [], textColors = [], borderColors = [];
+  all.forEach(el => {
+    const s = getComputedStyle(el);
+    bgColors.push(s.backgroundColor);
+    textColors.push(s.color);
+    borderColors.push(s.borderTopColor);
+  });
 
-Instead use a multi-step pipeline:
+  // --- Typography ---
+  const fontFamilies = [], fontSizes = [], fontWeights = [], lineHeights = [];
+  all.forEach(el => {
+    const s = getComputedStyle(el);
+    fontFamilies.push(s.fontFamily);
+    fontSizes.push(s.fontSize);
+    fontWeights.push(s.fontWeight);
+    lineHeights.push(s.lineHeight);
+  });
 
-1. Detect elements
-2. Group into layout
-3. Convert to React JSON
-4. (Optional) Refine
+  // --- Spacing (padding/margin) ---
+  const spacingValues = [];
+  all.forEach(el => {
+    const s = getComputedStyle(el);
+    ['paddingTop','paddingRight','paddingBottom','paddingLeft',
+     'marginTop','marginRight','marginBottom','marginLeft'].forEach(p => {
+      const v = parseFloat(s[p]);
+      if (v > 0) spacingValues.push(Math.round(v));
+    });
+  });
+  const spacingScale = [...new Set(spacingValues.sort((a, b) => a - b))].slice(0, 16);
 
-This massively improves accuracy.
+  // --- Border Radius ---
+  const radii = [];
+  all.forEach(el => {
+    const v = getComputedStyle(el).borderTopLeftRadius;
+    if (v && v !== '0px') radii.push(v);
+  });
 
+  // --- Shadows ---
+  const shadows = [];
+  all.forEach(el => {
+    const v = getComputedStyle(el).boxShadow;
+    if (v && v !== 'none') shadows.push(v);
+  });
 
----
-
-🥇 Prompt 1 — Element Extraction
-
-👉 Goal: Identify everything in the UI
-
-You are a UI analysis expert.
-
-Analyze this screenshot and extract ALL visible UI elements.
-
-Return a flat JSON array of elements with:
-- type (text, button, input, image, icon, container)
-- text content (if any)
-- approximate position (top, left, width, height as percentages)
-- visual attributes (color, font size, weight, border, radius)
-- relationships (if element appears grouped with others)
-
-Rules:
-- Be exhaustive (do not miss elements)
-- Do NOT infer hierarchy yet
-- Keep it flat
-- Output ONLY JSON
-
-Example format:
-[
-  {
-    "type": "text",
-    "content": "Login",
-    "position": { "top": 10, "left": 20, "width": 60, "height": 10 },
-    "style": { "fontSize": 24, "fontWeight": "bold" }
+  // --- CSS Variables (design tokens if using a design system) ---
+  const cssVars = {};
+  const rootStyles = getComputedStyle(document.documentElement);
+  for (const prop of rootStyles) {
+    if (prop.startsWith('--')) {
+      cssVars[prop] = rootStyles.getPropertyValue(prop).trim();
+    }
   }
-]
 
+  // --- Layout ---
+  const body = document.body;
+  const bodyStyle = getComputedStyle(body);
+  const layout = {
+    maxWidth: bodyStyle.maxWidth,
+    containerWidth: document.documentElement.clientWidth + 'px',
+    bodyPadding: bodyStyle.padding,
+  };
 
----
-
-🥈 Prompt 2 — Layout Structuring
-
-👉 Goal: Convert flat list → hierarchy
-
-You are a UI layout engine.
-
-Given a list of UI elements with positions, construct a hierarchical layout tree.
-
-Rules:
-- Group elements into containers based on proximity and alignment
-- Detect rows vs columns
-- Use flexbox concepts:
-  - vertical grouping → column
-  - horizontal grouping → row
-- Minimize unnecessary nesting
-- Preserve visual hierarchy
-
-Output format:
-{
-  "type": "container",
-  "layout": "column | row",
-  "children": [...]
-}
-
-Only output JSON.
-
-
----
-
-🥉 Prompt 3 — React JSON Conversion (IMPORTANT)
-
-👉 This is your main one
-
-You are an expert React developer.
-
-Convert the given UI layout into a React-compatible JSON tree.
-
-Requirements:
-- Use "component" instead of "type"
-- Use valid JSX tags (div, button, input, img, h1–h6, p)
-- Put all text inside props.children
-- Use Tailwind CSS classes for styling
-- Convert layout into flex classes:
-  - column → flex flex-col
-  - row → flex flex-row
-- Add spacing using gap, padding, margin
-- Use semantic tags when appropriate (button, input, form)
-
-Rules:
-- Avoid unnecessary wrapper divs
-- Keep structure clean and minimal
-- No inline styles
-- Output ONLY JSON
-
-Example:
-{
-  "component": "button",
-  "props": {
-    "className": "bg-blue-500 text-white px-4 py-2 rounded",
-    "children": "Submit"
+  // --- Component-level scan (buttons, inputs, headings) ---
+  const componentTokens = {};
+  const componentSelectors = {
+    h1: 'h1', h2: 'h2', h3: 'h3', h4: 'h4',
+    paragraph: 'p',
+    button: 'button, [role="button"], .btn',
+    input: 'input[type="text"], input[type="email"], textarea',
+    link: 'a',
+    card: '[class*="card"], [class*="Card"]',
+    nav: 'nav, header',
+  };
+  for (const [name, selector] of Object.entries(componentSelectors)) {
+    const el = document.querySelector(selector);
+    if (el) {
+      const s = getComputedStyle(el);
+      componentTokens[name] = {
+        fontSize: s.fontSize,
+        fontWeight: s.fontWeight,
+        fontFamily: s.fontFamily,
+        color: s.color,
+        backgroundColor: s.backgroundColor,
+        padding: `${s.paddingTop} ${s.paddingRight} ${s.paddingBottom} ${s.paddingLeft}`,
+        borderRadius: s.borderTopLeftRadius,
+        border: s.border,
+        lineHeight: s.lineHeight,
+        letterSpacing: s.letterSpacing,
+      };
+    }
   }
-}
 
-
----
-
-🔥 Prompt 4 — Refinement Pass (SUPER IMPORTANT)
-
-👉 This is what makes it feel “polished”
-
-You are a senior frontend engineer reviewing AI-generated UI code.
-
-Improve the given React JSON tree:
-
-- Fix layout inconsistencies
-- Improve spacing and alignment
-- Replace generic divs with semantic elements where possible
-- Ensure Tailwind classes are clean and consistent
-- Remove redundant nesting
-- Ensure accessibility (buttons, inputs properly structured)
-
-Do NOT change the visual design.
-
-Output ONLY the improved JSON.
-
-
----
-
-⚡ Optional Prompt 5 — Componentization (Advanced)
-
-👉 If you want reusable components
-
-Refactor this React JSON tree into reusable components.
-
-Rules:
-- Extract repeated patterns into components (e.g., Card, Button, InputField)
-- Replace raw elements with component references
-- Keep props clean and reusable
-
-Output format:
-{
-  "components": {
-    "Button": {...}
-  },
-  "tree": {...}
-}
-
-
----
-
-🧪 Single-Prompt Version (if you want faster)
-
-If you don’t want multi-step:
-
-Analyze this UI screenshot and convert it into a React-compatible JSON tree.
-
-Requirements:
-- Use "component" and "props"
-- Use Tailwind CSS classes
-- Maintain accurate layout using flexbox
-- Preserve hierarchy and spacing
-- Use semantic HTML elements
-- Put text inside props.children
-- Avoid unnecessary nesting
-
-Output ONLY JSON.
-
-👉 But expect lower accuracy vs multi-step.
-
-
----
-
-🚀 Pro Tips (Critical)
-
-1. Force strict JSON
-
-Add this:
-
-Return valid JSON only. No explanations.
-
-
----
-
-2. Use temperature = low
-
-temperature: 0.2–0.4 👉 more consistent structure
-
-
-
----
-
-3. Use image + text together
-
-Always send:
-
-Screenshot
-
-Prompt
-
-
-
----
-
-4. Add system role (VERY POWERFUL)
-
-You are a senior UI engineer specializing in React and Tailwind.
-
-
----
-
-5. Post-process with schema validation
-
-Use:
-
-Zod (TS)
-
-Pydantic (Python)
-
-
-
----
-
-🧠 Final Insight
-
-DOMscribe feels “smart” because it:
-
-✔ separates detection from layout
-✔ enforces structure
-✔ refines output
-
-Not because of a magical model.
-
-
----
-
-👍 If you want next
-
-I can:
-
-Give you a ready-to-use API call (OpenAI / GPT-4o)
-
-Build a full pipeline (Node + TS)
-
-Or help you fine-tune prompts for your specific UI type
-
-
-Just tell me 👍
+  // --- Image assets (logo, icons) ---
+  const images = Array.from(document.querySelectorAll('img')).slice(0, 10).map(img => ({
+    src: img.src,
+    alt: img.alt,
+    width: img.naturalWidth,
+    height: img.naturalHeight,
+  }));
+
+  // --- Assemble final JSON ---
+  const tokens = {
+    meta: {
+      url: location.href,
+      title: document.title,
+      extractedAt: new Date().toISOString(),
+    },
+    cssVariables: cssVars,
+    colors: {
+      backgrounds: freq(bgColors).filter(c => c !== 'rgba(0, 0, 0, 0)'),
+      text: freq(textColors),
+      borders: freq(borderColors).filter(c => c !== 'rgba(0, 0, 0, 0)'),
+    },
+    typography: {
+      fontFamilies: freq(fontFamilies),
+      fontSizes: [...new Set(freq(fontSizes))].sort((a, b) => parseFloat(a) - parseFloat(b)),
+      fontWeights: [...new Set(freq(fontWeights))],
+      lineHeights: freq(lineHeights).slice(0, 8),
+    },
+    spacing: spacingScale,
+    borderRadius: freq(radii).slice(0, 8),
+    shadows: [...new Set(shadows)].slice(0, 6),
+    layout,
+    components: componentTokens,
+    images,
+  };
+
+  console.log('=== DESIGN TOKENS JSON ===');
+  console.log(JSON.stringify(tokens, null, 2));
+  copy(JSON.stringify(tokens, null, 2)); // auto-copies to clipboard
+  return tokens;
+})();
+```
+
+**How to use it:**
+
+1. Open the target website in Chrome/Edge/Firefox
+2. Press `F12` → go to the **Console** tab
+3. Paste the entire script and hit Enter
+4. The JSON is printed AND auto-copied to your clipboard (`copy()` works in Chrome)
+5. Save it as `design-tokens.json`
+
+**What you get in the JSON:**
+
+- `cssVariables` — any `--custom-properties` (goldmine if they use a design system like Tailwind, MUI, or custom tokens)
+- `colors.backgrounds/text/borders` — top 20 most-used actual computed colors across all elements
+- `typography` — font families, all sizes in use, weights, line heights
+- `spacing` — deduplicated spacing scale derived from real padding/margin values
+- `borderRadius` — all corner radius values actually used
+- `shadows` — exact `box-shadow` values
+- `components` — per-component styles for h1–h4, p, button, input, a, card, nav
+- `images` — logo and image assets with dimensions
+
+**Then give the AI this prompt with your JSON:**
+
+> "Here is a design token JSON extracted programmatically from the site I want to replicate. Build the UI using these exact values — use the `cssVariables` as your design system foundation, `components` for element-level styles, and `colors`/`typography`/`spacing` for the overall system. Do not invent values."
+
+This gives the AI precise, grounded values instead of guessing — which is where most AI-generated UI clones fall apart.
