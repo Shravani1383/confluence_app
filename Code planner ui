@@ -1,70 +1,343 @@
+Great — now you’re designing a clean, minimal 2-agent system (Planner → Builder) with GitHub write capability. Let’s refine it specifically for your “flat UI (single App.tsx)” approach.
+
+
+---
+
+🧠 1. What Changes in the Planner Agent?
+
+Since you don’t want components, the planner becomes:
+
+👉 Layout Interpreter + Code Blueprint Generator (flat structure)
+
+
+---
+
+❌ REMOVE from planner
+
+Component breakdown
+
+File-per-component mapping
+
+Reusability planning
+
+
+
+---
+
+✅ ADD / FOCUS on
+
+The planner should now produce:
+
+🔹 1. UI Sections (not components)
+
+{
+  "sections": [
+    {
+      "name": "Header",
+      "type": "header",
+      "content": "Dashboard"
+    },
+    {
+      "name": "CardList",
+      "type": "list",
+      "itemType": "card",
+      "count": 3
+    }
+  ]
+}
+
+
+---
+
+🔹 2. Layout Strategy
+
+{
+  "layout": {
+    "type": "vertical",
+    "children": [
+      "Header",
+      "CardList"
+    ]
+  }
+}
+
+
+---
+
+🔹 3. Rendering Strategy
+
+This is NEW and very important 👇
+
+{
+  "rendering": {
+    "CardList": {
+      "method": "map",
+      "dataStructure": "array",
+      "key": "title"
+    }
+  }
+}
+
+
+---
+
+🔹 4. Data Model
+
+{
+  "dataModel": {
+    "cards": {
+      "type": "array",
+      "item": {
+        "title": "string",
+        "description": "string"
+      }
+    }
+  }
+}
+
+
+---
+
+🔹 5. Design System Usage
+
+{
+  "designSystem": [
+    {
+      "element": "Button",
+      "source": "@hsbc/evolve-base-assets"
+    }
+  ]
+}
+
+
+---
+
+🔹 6. Coding Rules (carry forward)
+
+{
+  "rules": {
+    "useMap": true,
+    "noMutation": true,
+    "semanticCode": true,
+    "meaningfulNames": true
+  }
+}
+
+
+---
+
+🧾 2. Planner Agent Prompt (FLAT MODE)
+
 You are a senior frontend architect.
 
-Your task is to analyze UI specifications and produce a detailed implementation plan for a React + TypeScript application.
+Your task is to analyze UI specifications and layout description and produce a detailed implementation plan for a React + TypeScript application.
 
-You will NOT write code.
+Constraints:
+- The final implementation will be in a SINGLE file: src/App.tsx
+- Do NOT create reusable components
+- Do NOT plan multiple files
 
-You MUST output a structured plan that includes:
+Your plan MUST include:
 
-1. Page structure
-   - List all pages
-   - Define main entry (App.tsx)
+1. Sections:
+   - Break UI into logical sections (e.g., Header, List, CardGroup)
 
-2. Component breakdown
-   - Identify all reusable components
-   - Keep components small and modular
+2. Layout:
+   - Define how sections are arranged (vertical, grid, row, etc.)
 
-3. File structure
-   - Map each component to a file path under src/components
-   - Pages go under src/
+3. Rendering strategy:
+   - Specify where to use array.map for repeated UI
+   - Define keys for list rendering
 
-4. Component design
-   - Define props for each component
-   - Use clear, intention-revealing names
-   - Avoid boolean flag props
+4. Data model:
+   - Define TypeScript-friendly data structures required
 
-5. Component composition
-   - Show hierarchy (which component uses which)
-
-6. Data flow
-   - Describe how data flows between components
-
-7. Design system usage
+5. Design system usage:
    - Identify where @hsbc/evolve-base-assets components should be used
 
-8. Best practices enforcement
-   Ensure the plan:
-   - Avoids mutation
-   - Uses semantic methods (map, filter, includes)
-   - Avoids deeply nested logic
-   - Keeps logic separated from UI where possible
+6. Code guidelines:
+   Ensure the plan enforces:
+   - Meaningful variable names
+   - No mutation
+   - Use of map/filter instead of loops
+   - Readable and semantic code
 
-9. Output format
-   - Return structured JSON
-   - No explanations outside JSON
+Output format:
+- Return structured JSON only
+- No explanations outside JSON
 
 Goal:
-Produce a clear, scalable frontend architecture plan that another agent can directly use to generate code.
+Produce a clear, implementation-ready plan for generating a single-file React UI.
 
+
+---
+
+🛠️ 3. Builder (Implementation Agent) Prompt
+
+This agent consumes the planner output + your repo.
+
+
+---
+
+🧾 Builder Prompt
 
 You are a senior frontend engineer.
 
-Generate a React + TypeScript UI inside a single file: src/App.tsx.
+Your task is to implement a React + TypeScript UI inside a SINGLE file: src/App.tsx.
 
-Based on the provided UI specification:
+You are given:
+1. A base repository with React + TypeScript setup
+2. A structured UI plan (JSON)
+3. HSBC design system (@hsbc/evolve-base-assets)
 
-- Do NOT create multiple files
-- Do NOT create reusable components
-- Write everything inside App.tsx
+Instructions:
 
-Requirements:
-- Use functional React component
-- Use TypeScript types where appropriate
-- Use meaningful variable names
-- Use map instead of loops where possible
-- Avoid mutation
-- Keep code clean and readable
+1. Implementation:
+   - Write all UI inside App.tsx
+   - Do NOT create additional component files
+   - Follow the layout and sections defined in the plan
 
-If applicable, use components from @hsbc/evolve-base-assets.
+2. Data handling:
+   - Create TypeScript types based on the data model
+   - Use arrays and map() for repeated UI sections
 
-Return ONLY the code for App.tsx.
+3. Code quality:
+   - Use meaningful variable names
+   - Avoid mutation
+   - Use semantic JavaScript (includes, map, filter)
+   - Keep code clean and readable
+
+4. Design system:
+   - Use @hsbc/evolve-base-assets components where specified
+
+5. Structure:
+   - Keep logic minimal and inside the component
+   - No unnecessary abstractions
+
+6. Output format:
+   - Return ONLY the complete code for src/App.tsx
+
+7. Do NOT include:
+   - node_modules
+   - package-lock.json
+   - multiple files
+
+Goal:
+Generate clean, working UI code that matches the plan exactly.
+
+
+---
+
+🔄 4. End-to-End Flow (Your System Now)
+
+UI Spec + Layout
+        ↓
+🧠 Planner Agent
+        ↓
+Structured JSON Plan
+        ↓
+🛠️ Builder Agent
+        ↓
+App.tsx
+        ↓
+GitHub API → Commit → PR
+
+
+---
+
+🧠 5. (Optional but HIGHLY Recommended) Add 1 More Agent
+
+Even in simple mode, add:
+
+
+---
+
+🛡️ Reviewer Agent (Lightweight)
+
+Purpose:
+
+Catch bad naming
+
+Catch mutation
+
+Improve readability
+
+
+
+---
+
+Prompt (simple)
+
+You are a senior frontend reviewer.
+
+Review the provided React + TypeScript code.
+
+Fix:
+- Poor variable naming
+- Mutations
+- Non-semantic JavaScript
+- Readability issues
+
+Do NOT change functionality.
+
+Return improved code only.
+
+
+---
+
+⚖️ 6. Why This Setup Is Perfect Right Now
+
+You now have:
+
+✅ Simple but powerful
+
+No overengineering
+
+Still structured thinking
+
+
+✅ Testable
+
+You can debug planner vs builder separately
+
+
+✅ Scalable later
+
+You can reintroduce components easily
+
+
+
+---
+
+🔥 Final Recommendation
+
+Start with:
+
+1. Planner (flat JSON)
+
+
+2. Builder (App.tsx only)
+
+
+3. (Optional) Reviewer
+
+
+
+👉 Skip GitHub automation initially → test locally
+👉 Then plug GitHub API
+
+
+---
+
+🚀 Next Step
+
+If you want, I can:
+
+Take your real UI spec → run through planner → show expected JSON
+
+Then show final App.tsx output
+
+Or help you wire this into GitHub API (commit + PR)
+
+
+Just send your UI spec 👍
