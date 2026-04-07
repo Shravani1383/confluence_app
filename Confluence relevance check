@@ -1,0 +1,297 @@
+Great — you’re at the exact point where adding ranking + top-k filtering will significantly improve answer quality.
+
+I’ll give you a production-ready implementation with:
+
+✅ Scoring (BM25-style + simple semantic boost)
+
+✅ Top-k filtering
+
+✅ Clean integration into your existing agent tools
+
+✅ Exact files to modify + new files
+
+
+
+---
+
+🧠 What we’re adding
+
+Right now:
+
+search → fetch → LLM
+
+We’ll change it to:
+
+search → score → rank → top-k → fetch → LLM
+
+
+---
+
+📁 FILE STRUCTURE (NEW + MODIFIED)
+
+🆕 New file
+
+chat/agents/confluence/relevance.py
+
+✏️ Modified files
+
+chat/agents/confluence/confluence_tools/confluence_search.py
+chat/agents/confluence/confluence_agents.py
+
+
+---
+
+1️⃣ 🆕 Create: relevance.py
+
+This handles scoring + ranking.
+
+# chat/agents/confluence/relevance.py
+
+import math
+import re
+from typing import List, Dict
+
+
+def _tokenize(text: str) -> List[str]:
+    return re.findall(r"\w+", text.lower())
+
+
+def _term_frequency(tokens: List[str]) -> Dict[str, int]:
+    tf = {}
+    for t in tokens:
+        tf[t] = tf.get(t, 0) + 1
+    return tf
+
+
+def _compute_idf(docs_tokens: List[List[str]]) -> Dict[str, float]:
+    import math
+
+    N = len(docs_tokens)
+    df = {}
+
+    for tokens in docs_tokens:
+        for token in set(tokens):
+            df[token] = df.get(token, 0) + 1
+
+    idf = {}
+    for token, freq in df.items():
+        idf[token] = math.log((N + 1) / (freq + 1)) + 1
+
+    return idf
+
+
+def bm25_score(query: str, documents: List[str]) -> List[float]:
+    """
+    Lightweight BM25-style scoring
+    """
+    k1 = 1.5
+    b = 0.75
+
+    doc_tokens = [_tokenize(doc) for doc in documents]
+    query_tokens = _tokenize(query)
+
+    avgdl = sum(len(t) for t in doc_tokens) / (len(doc_tokens) or 1)
+    idf = _compute_idf(doc_tokens)
+
+    scores = []
+
+    for tokens in doc_tokens:
+        tf = _term_frequency(tokens)
+        score = 0.0
+
+        for q in query_tokens:
+            if q not in tf:
+                continue
+
+            freq = tf[q]
+            numerator = freq * (k1 + 1)
+            denominator = freq + k1 * (1 - b + b * len(tokens) / avgdl)
+
+            score += idf.get(q, 0) * (numerator / denominator)
+
+        scores.append(score)
+
+    return scores
+
+
+def simple_semantic_boost(query: str, doc: str) -> float:
+    """
+    Very lightweight semantic signal:
+    boosts if query words appear in title-like positions
+    """
+    query_tokens = set(_tokenize(query))
+    doc_tokens = _tokenize(doc[:200])  # first 200 chars = "title-ish"
+
+    overlap = query_tokens.intersection(doc_tokens)
+    return len(overlap) * 0.5
+
+
+def rank_documents(query: str, docs: List[Dict], top_k: int = 5) -> List[Dict]:
+    """
+    docs = [{"title": ..., "content": ..., "url": ...}]
+    """
+    if not docs:
+        return []
+
+    texts = [
+        f"{d.get('title','')} {d.get('content','')[:500]}"
+        for d in docs
+    ]
+
+    bm25_scores = bm25_score(query, texts)
+
+    scored_docs = []
+    for i, doc in enumerate(docs):
+        semantic = simple_semantic_boost(query, texts[i])
+        total_score = bm25_scores[i] + semantic
+
+        scored_docs.append({
+            **doc,
+            "score": total_score
+        })
+
+    ranked = sorted(scored_docs, key=lambda x: x["score"], reverse=True)
+
+    return ranked[:top_k]
+
+
+---
+
+2️⃣ ✏️ Modify: confluence_search.py
+
+BEFORE (likely)
+
+return pages
+
+
+---
+
+AFTER (integrate ranking)
+
+from chat.agents.confluence.relevance import rank_documents
+
+
+async def confluence_search_pages(query: str) -> list:
+    raw_pages = await _search_confluence_api(query)
+
+    # Normalize structure
+    docs = []
+    for p in raw_pages:
+        docs.append({
+            "title": p.get("title", ""),
+            "content": p.get("excerpt", "") or "",
+            "url": p.get("url")
+        })
+
+    # 🔥 NEW: rank + top-k filter
+    ranked_docs = rank_documents(query, docs, top_k=5)
+
+    return ranked_docs
+
+
+---
+
+3️⃣ ✏️ Modify: confluence_agents.py
+
+We improve tool descriptions so the LLM understands ranking behavior.
+
+Update tool descriptions:
+
+FunctionTool(
+    confluence_search_pages,
+    name="confluence_search_pages",
+    description=(
+        "Search Confluence pages by keywords. "
+        "Results are automatically ranked by relevance and limited to top results."
+    ),
+),
+
+
+---
+
+4️⃣ (Optional but STRONGLY recommended) Improve fetch usage
+
+Right now the agent may fetch blindly.
+
+👉 Add instruction in SYSTEM_MESSAGE:
+
+SYSTEM_MESSAGE = """
+You are a Confluence assistant.
+
+Guidelines:
+- Always use search first before fetching pages.
+- Only fetch pages that are highly relevant.
+- Prefer top-ranked results.
+- Avoid fetching too many pages.
+- Use sources when answering.
+"""
+
+
+---
+
+🧪 Example Flow AFTER changes
+
+Query:
+
+"how to deploy service X"
+
+Before:
+
+returns 20 pages
+
+agent randomly picks
+
+
+After:
+
+1. Search returns 20 pages
+
+
+2. Ranking scores them
+
+
+3. Top 5 returned
+
+
+4. Agent only sees best candidates
+
+
+
+👉 Huge improvement in answer quality
+
+
+---
+
+⚡ Optional Upgrade (next step)
+
+If you want even better ranking, I can help you add:
+
+embeddings (OpenAI / Azure)
+
+cosine similarity
+
+hybrid search (BM25 + vector)
+
+
+
+---
+
+✅ Final Summary
+
+You now have:
+
+✅ BM25-style scoring
+
+✅ Semantic boost
+
+✅ Top-k filtering
+
+✅ Clean integration with your tools
+
+✅ No infra changes required
+
+
+
+---
+
+If you want next level: 👉 I can help you plug in vector search (true RAG) or reranking with LLMs.
