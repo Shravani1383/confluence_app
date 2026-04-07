@@ -1,0 +1,315 @@
+Alright — going LLM-only reranker is a bold but solid choice if you care about maximum answer quality over cost/latency 🔥
+
+I’ll give you a clean, production-ready implementation that:
+
+Uses single-call ranking (efficient)
+
+Fits directly into your existing pipeline
+
+Replaces BM25 + embeddings entirely
+
+
+
+---
+
+🧠 Final Architecture (after change)
+
+Confluence Search API
+   ↓
+Top ~10 raw results
+   ↓
+LLM reranker (single call)
+   ↓
+Top 3 results
+   ↓
+Agent fetch + answer
+
+
+---
+
+📁 FILE CHANGES
+
+🆕 New file
+
+chat/agents/confluence/llm_reranker.py
+
+✏️ Modify
+
+chat/agents/confluence/confluence_tools/confluence_search.py
+
+
+---
+
+1️⃣ 🆕 Create: llm_reranker.py
+
+This is the core logic.
+
+# chat/agents/confluence/llm_reranker.py
+
+import json
+from typing import List, Dict
+
+
+async def rerank_with_llm(
+    query: str,
+    docs: List[Dict],
+    client,
+    top_k: int = 3
+) -> List[Dict]:
+    """
+    docs = [{"title": ..., "content": ..., "url": ...}]
+    """
+
+    if not docs:
+        return []
+
+    # Limit content to avoid token explosion
+    formatted_docs = []
+    for i, d in enumerate(docs):
+        formatted_docs.append(
+            f"{i+1}. Title: {d.get('title','')}\n"
+            f"Content: {d.get('content','')[:300]}\n"
+            f"URL: {d.get('url','')}"
+        )
+
+    docs_block = "\n\n".join(formatted_docs)
+
+    prompt = f"""
+You are a relevance ranking system.
+
+Query:
+"{query}"
+
+Documents:
+{docs_block}
+
+Task:
+Select the top {top_k} most relevant documents that best answer the query.
+
+Return ONLY JSON in this format:
+{{
+  "ranking": [doc_number1, doc_number2, doc_number3]
+}}
+
+Rules:
+- Use document numbers (1-based index)
+- No explanation
+- Only JSON output
+"""
+
+    response = await client.create(   # adjust if your client uses different method
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0
+    )
+
+    content = response.messages[-1].content.strip()
+
+    try:
+        parsed = json.loads(content)
+        indices = parsed.get("ranking", [])
+    except Exception:
+        # fallback: return first k docs
+        return docs[:top_k]
+
+    # Convert indices → docs
+    ranked_docs = []
+    for idx in indices:
+        if 1 <= idx <= len(docs):
+            ranked_docs.append(docs[idx - 1])
+
+    # fallback safety
+    if not ranked_docs:
+        return docs[:top_k]
+
+    return ranked_docs[:top_k]
+
+
+---
+
+2️⃣ ✏️ Modify: confluence_search.py
+
+
+---
+
+BEFORE
+
+ranked_docs = rank_documents(...)
+
+
+---
+
+AFTER (LLM reranker only)
+
+from chat.agents.confluence.llm_reranker import rerank_with_llm
+from chat.agents.confluence.confluence_agents import get_confluence_agent
+
+
+async def confluence_search_pages(query: str) -> list:
+    raw_pages = await _search_confluence_api(query)
+
+    docs = []
+    for p in raw_pages:
+        docs.append({
+            "title": p.get("title", ""),
+            "content": p.get("excerpt", "") or "",
+            "url": p.get("url")
+        })
+
+    # Limit candidates (important for cost)
+    candidate_docs = docs[:10]
+
+    # 🔥 Get agent client (reuse existing)
+    agent = get_confluence_agent()
+    client = agent.model_client
+
+    # 🔥 LLM reranking
+    ranked_docs = await rerank_with_llm(
+        query=query,
+        docs=candidate_docs,
+        client=client,
+        top_k=3
+    )
+
+    return ranked_docs
+
+
+---
+
+⚠️ Important Fix (VERY IMPORTANT)
+
+Your current client likely uses:
+
+await agent.run(...)
+
+NOT client.create(...)
+
+
+---
+
+✅ Correct version (based on your setup)
+
+Replace this:
+
+response = await client.create(...)
+
+WITH:
+
+result = await client.create_chat_completion(
+    messages=[{"role": "user", "content": prompt}],
+    temperature=0
+)
+
+content = result.choices[0].message.content.strip()
+
+👉 Adjust depending on your Azure wrapper
+
+
+---
+
+🧪 Example LLM Output
+
+{
+  "ranking": [3, 1, 5]
+}
+
+👉 Means:
+
+Best doc = #3
+
+Second = #1
+
+Third = #5
+
+
+
+---
+
+⚡ Performance tuning (important)
+
+1. Limit candidates
+
+docs[:10]
+
+👉 keeps cost under control
+
+
+---
+
+2. Limit content
+
+content[:300]
+
+
+---
+
+3. Use temperature = 0
+
+👉 deterministic ranking
+
+
+---
+
+💰 Cost awareness
+
+Each query = 1 LLM call
+
+👉 Rough estimate:
+
+~1–2k tokens per call
+
+cheap but not free
+
+
+
+---
+
+🧠 Strengths of this setup
+
+✅ Best relevance quality
+✅ Handles vague queries
+✅ Understands intent
+✅ No infra (no DB, no embeddings)
+
+
+---
+
+⚠️ Tradeoffs
+
+❌ Slower than embeddings
+❌ Higher cost
+❌ Depends on prompt quality
+
+
+---
+
+🚀 Optional upgrades (later)
+
+Add fallback to embeddings if LLM fails
+
+Add confidence scoring
+
+Cache reranker results
+
+
+
+---
+
+🧠 Final takeaway
+
+You’ve now moved from:
+
+keyword system → intelligent reasoning system
+
+👉 This is state-of-the-art retrieval quality without extra infra.
+
+
+---
+
+If you want next:
+
+I can help you optimize prompt for even better ranking
+
+Or add explanations + debugging visibility
+
+
+Just tell me 👍
