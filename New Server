@@ -578,10 +578,68 @@ async def confluence_update_page(confluence_url: str, access_token: str, space_k
                 }
             ]
         }
-
 @mcp.tool()
 @rate_limited_retry
 async def confluence_delete_page(confluence_url: str, access_token: str, space_key: str, page_id: str) -> Dict[str, Any]:
     """Delete a Confluence page.
     
-    This tool pe
+    This tool permanently deletes a page from Confluence.
+    
+    Args:
+        confluence_url: The Confluence instance URL
+        access_token: The API access token
+        space_key: The space key where the page exists
+        page_id: The ID of the page to delete
+    
+    Returns:
+        Dict indicating success or failure
+    
+    Example:
+        ```python
+        result = await confluence_delete_page(
+            confluence_url="https://your-domain.atlassian.net/wiki",
+            access_token="your-token",
+            space_key="SPACE",
+            page_id="123456"
+        )
+        ```
+    """
+    try:
+        # Validate input
+        input_data = PageInput(
+            confluence_url=confluence_url,
+            access_token=access_token,
+            space_key=space_key,
+            page_id=page_id
+        )
+        
+        # Create client
+        confluence = create_confluence_client(input_data.confluence_url, input_data.access_token)
+        
+        # Delete page with progress logging
+        logger.info(f"Deleting page {input_data.page_id} from space {input_data.space_key}")
+        confluence.remove_page(input_data.page_id)
+        
+        logger.info("Page deleted successfully")
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Page deleted successfully"
+                }
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Failed to delete page: {str(e)}")
+        return {
+            "isError": True,
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Error: {str(e)}"
+                }
+            ]
+        }
+
+if __name__ == "__main__":
+    mcp.run()
