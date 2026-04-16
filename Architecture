@@ -1,0 +1,344 @@
+Here’s a clean, structured Confluence-ready draft based on your notes. I’ve tightened the language, organized it logically, and made it easy for stakeholders + engineers to read.
+
+
+---
+
+Confluence Search & Fetch Agent Architecture
+
+Objective
+
+Build an intelligent agent-driven system to fetch, rank, and extract relevant information from Confluence and search sources to generate accurate, context-aware responses.
+
+Enable seamless integration with existing agentic RAG systems and UI-triggered workflows.
+
+
+---
+
+Overview
+
+This system introduces an agent orchestrator that dynamically decides which tools to invoke (Confluence fetch, search APIs, etc.) and processes results through ranking and extraction pipelines.
+
+It supports:
+
+Intelligent tool selection (agent-driven or predefined flow)
+
+Multi-source retrieval (search + Confluence)
+
+Relevance-based ranking and summarization
+
+Response generation using top results
+
+
+
+---
+
+High-Level Architecture
+
+User Query
+   ↓
+Intent Extractor (CQL Generator)
+   ↓
+Agent Orchestrator
+   ├── Confluence Search Tool (MCP)
+   ├── External Search Tool (MCP)
+   ↓
+Fetch Top N URLs (e.g., 30)
+   ↓
+Ranking Engine (Relevance Scoring)
+   ↓
+Top 3 URL Selection
+   ↓
+Content Extraction
+   ↓
+Response Generator (LLM)
+   ↓
+Final Answer
+
+
+---
+
+Core Functionalities
+
+1. Query Processing
+
+Accept user query
+
+Extract intent
+
+Convert into Confluence Query Language (CQL) or search query
+
+
+2. Agent Orchestration
+
+Decide:
+
+Which tool(s) to call (Confluence / Search / Both)
+
+Whether to follow dynamic reasoning or predefined pipeline
+
+
+
+3. Search & Retrieval
+
+Fetch up to 30 URLs/documents
+
+Sources:
+
+Confluence pages
+
+External/internal search APIs
+
+
+
+4. Ranking Engine
+
+Rank results based on:
+
+Query relevance
+
+Content similarity
+
+Metadata signals
+
+
+Select Top 3 most relevant URLs
+
+
+5. Content Extraction
+
+Extract useful sections from selected pages
+
+Handle:
+
+Structured Confluence pages
+
+Linked URLs within pages
+
+
+
+6. Linked URL Handling
+
+Detect embedded/linked Confluence URLs
+
+If relevant, include them in extraction pipeline
+
+
+7. Response Generation
+
+Use extracted content
+
+Generate concise, accurate response using LLM
+
+
+
+---
+
+System Components
+
+MCP Tools
+
+Confluence Search Tool
+
+Confluence Fetch Tool
+
+External Search Tool
+
+
+Agent Layer
+
+Agent Orchestrator
+
+Decision Engine (tool selection vs fixed flow)
+
+
+Processing Layer
+
+Intent Extractor (CQL Generator)
+
+Ranking Engine
+
+Content Extractor
+
+
+Generation Layer
+
+LLM-based Response Generator
+
+
+
+---
+
+Workflow (Detailed)
+
+1. User submits query
+
+
+2. Intent extractor generates CQL/search query
+
+
+3. Orchestrator decides tool(s)
+
+
+4. Search tool returns ~30 URLs
+
+
+5. Ranking engine scores results
+
+
+6. Top 3 URLs selected
+
+
+7. Content extracted (+ linked pages if relevant)
+
+
+8. LLM generates final response
+
+
+
+
+---
+
+Integration Approaches
+
+Approach 1: Agentic RAG Integration
+
+Integrate with existing agentic RAG system
+
+Trigger conditions:
+
+Internal queries (e.g., HSBC-related)
+
+
+Flow:
+
+Agent detects internal query
+
+Calls Confluence API via MCP tools
+
+Returns structured response
+
+
+
+Examples:
+
+"How to set up Python in HSBC?"
+
+"Features in HSBC productivity suite"
+
+"Allowed GCP tools in HSBC"
+
+
+
+---
+
+Approach 2: UI-Based Trigger
+
+Add Confluence Mode Toggle in UI
+
+Flow:
+
+User enables toggle
+
+Submits query
+
+System directly triggers Confluence pipeline
+
+
+
+
+---
+
+Tasks & Implementation Plan
+
+1. MCP Tooling
+
+[ ] Build Confluence Search MCP tool
+
+[ ] Build Confluence Fetch MCP tool
+
+[ ] Integrate external search APIs
+
+
+2. Agent Orchestration
+
+[ ] Implement decision-making logic
+
+[ ] Define tool selection strategy
+
+[ ] Support fallback to predefined flow
+
+
+3. Intent Extraction
+
+[ ] Build CQL generator
+
+[ ] Map user queries to structured search queries
+
+
+4. Ranking Engine
+
+[ ] Define ranking criteria
+
+[ ] Implement scoring algorithm
+
+[ ] Optimize top-k selection (Top 3)
+
+
+5. Content Extraction
+
+[ ] Parse Confluence pages
+
+[ ] Extract relevant sections
+
+[ ] Handle linked URLs
+
+
+6. Response Generation
+
+[ ] Prompt design for LLM
+
+[ ] Context assembly from extracted data
+
+[ ] Response validation
+
+
+7. UI Integration
+
+[ ] Add Confluence mode toggle
+
+[ ] Connect UI to backend pipeline
+
+
+8. Monitoring & Evaluation
+
+[ ] Track relevance accuracy
+
+[ ] Measure response quality
+
+[ ] Log tool usage and latency
+
+
+
+---
+
+Future Enhancements
+
+Adaptive ranking using feedback loops
+
+Personalized search results
+
+Caching frequently accessed pages
+
+Multi-hop reasoning across documents
+
+Confidence scoring in responses
+
+
+
+---
+
+If you want, I can also convert this into:
+
+a visual architecture diagram (image)
+
+or a Jira breakdown with epics + stories
